@@ -108,9 +108,77 @@ pub trait Parser {
     fn parse<F: FnMut(Event)>(&mut self, c: char, selection: bool, f: F);
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ViOperator {
+    AutoIndent,
+    Change,
+    Delete,
+    ShiftLeft,
+    ShiftRight,
+    SwapCase,
+    Yank,
+}
+
+impl TryFrom<char> for ViOperator {
+    type Error = char;
+
+    fn try_from(c: char) -> Result<Self, char> {
+        match c {
+            '=' => Ok(Self::AutoIndent),
+            'c' => Ok(Self::Change),
+            'd' => Ok(Self::Delete),
+            '<' => Ok(Self::ShiftLeft),
+            '>' => Ok(Self::ShiftRight),
+            'y' => Ok(Self::Yank),
+            '~' => Ok(Self::SwapCase),
+            _ => Err(c),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ViTextObject {
+    AngleBrackets,
+    Block,
+    CurlyBrackets,
+    DoubleQuotes,
+    Paragraph,
+    Parentheses,
+    Sentence,
+    SingleQuotes,
+    SquareBrackets,
+    Tag,
+    Ticks,
+    Word,
+}
+
+impl TryFrom<char> for ViTextObject {
+    type Error = char;
+
+    fn try_from(c: char) -> Result<Self, char> {
+        match c {
+            '<' | '>' => Ok(Self::AngleBrackets),
+            //TODO: should B be different?
+            'b' | 'B' => Ok(Self::Block),
+            '{' | '}' => Ok(Self::CurlyBrackets),
+            '"' => Ok(Self::DoubleQuotes),
+            'p' => Ok(Self::Paragraph),
+            '(' | ')' => Ok(Self::Parentheses),
+            's' => Ok(Self::Sentence),
+            '\'' => Ok(Self::SingleQuotes),
+            '[' | ']' => Ok(Self::SquareBrackets),
+            't' => Ok(Self::Tag),
+            '`' => Ok(Self::Ticks),
+            'w' => Ok(Self::Word),
+            _ => Err(c),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ViNormal {
     count: Option<u32>,
+    op: Option<ViOperator>,
 }
 
 impl ViNormal {
@@ -118,6 +186,20 @@ impl ViNormal {
     pub fn repeat<F: FnMut(u32)>(&mut self, mut f: F) {
         for i in 0..self.count.take().unwrap_or(1) {
             f(i);
+        }
+    }
+
+    /// Run operation, resetting it to defaults
+    pub fn run<F: FnMut(Event)>(&mut self, mut f: F) {
+        let count = self.count.take().unwrap_or(1);
+        let op = self.op.take();
+        match op {
+            Some(_) => {
+                //TODO: handle ops
+            }
+            None => {
+                // Just a move
+            }
         }
     }
 }

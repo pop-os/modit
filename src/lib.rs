@@ -79,14 +79,6 @@ pub enum Event {
     Backspace,
     /// Delete text in front of cursor
     Delete,
-    // Indent text (typically Tab)
-    Indent,
-    // Unindent text (typically Shift+Tab)
-    Unindent,
-    /// Move cursor to previous word boundary
-    PreviousWord,
-    /// Move cursor to next word boundary
-    NextWord,
     /// Go to previous search item
     PreviousSearch,
     /// Go to next search item
@@ -95,8 +87,6 @@ pub enum Event {
     GotoEof,
     /// Got to specified line
     GotoLine(u32),
-    /// Copy to clipboard (TODO: multiple clipboards?)
-    Copy,
     /// Paste from clipboard (TODO: multiple clipboards?)
     Paste,
     /// Undo last action

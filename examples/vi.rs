@@ -12,7 +12,15 @@ fn parse(string: &str) -> Vec<Event> {
 }
 
 fn main() {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+
     println!("{:#?}", parse(&format!("iHello, World!{ESCAPE}")));
 
-    println!("{:#?}", parse(&format!("12w")));
+    println!("{:#?}", parse(&format!("10w")));
+
+    println!("{:#?}", parse(&format!("cw")));
+
+    println!("{:#?}", parse(&format!("diw")));
+
+    println!("{:#?}", parse(&format!("dap")));
 }

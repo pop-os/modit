@@ -45,12 +45,10 @@ pub const ESCAPE: char = '\x1b';
 pub const ENTER: char = '\n';
 pub const TAB: char = '\t';
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Event {
     /// Move cursor left
     Left,
-    /// Move cursor left (if possible)
-    LeftIfPossible,
     /// Move cursor right
     Right,
     /// Move cursor up
@@ -73,6 +71,8 @@ pub enum Event {
     Escape,
     /// Insert character at cursor
     Insert(char),
+    /// Replace character at cursor, moving cursor to the next
+    Replace(char),
     /// Create new line
     NewLine,
     /// Delete text behind cursor
@@ -101,6 +101,8 @@ pub enum Event {
     Paste,
     /// Undo last action
     Undo,
+    //TODO: special hack, clean up!
+    Operator(u32, ViOperator, ViMotion, Option<ViTextObject>),
 }
 
 pub trait Parser {
@@ -108,35 +110,51 @@ pub trait Parser {
     fn parse<F: FnMut(Event)>(&mut self, c: char, selection: bool, f: F);
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ViOperator {
     AutoIndent,
     Change,
     Delete,
+    Move,
     ShiftLeft,
     ShiftRight,
     SwapCase,
     Yank,
 }
 
-impl TryFrom<char> for ViOperator {
-    type Error = char;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ViWord {
+    Small,
+    Big,
+}
 
-    fn try_from(c: char) -> Result<Self, char> {
-        match c {
-            '=' => Ok(Self::AutoIndent),
-            'c' => Ok(Self::Change),
-            'd' => Ok(Self::Delete),
-            '<' => Ok(Self::ShiftLeft),
-            '>' => Ok(Self::ShiftRight),
-            'y' => Ok(Self::Yank),
-            '~' => Ok(Self::SwapCase),
-            _ => Err(c),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ViMotion {
+    Around,
+    Down,
+    Inside,
+    Left,
+    Line,
+    NextWordEnd(ViWord),
+    NextWordStart(ViWord),
+    PreviousWordEnd(ViWord),
+    PreviousWordStart(ViWord),
+    Right,
+    Selection,
+    Up,
+}
+
+impl ViMotion {
+    /// Returns true if text object is needed
+    pub fn text_object(&self) -> bool {
+        match self {
+            Self::Around | Self::Inside => true,
+            _ => false,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ViTextObject {
     AngleBrackets,
     Block,
@@ -149,36 +167,16 @@ pub enum ViTextObject {
     SquareBrackets,
     Tag,
     Ticks,
-    Word,
-}
-
-impl TryFrom<char> for ViTextObject {
-    type Error = char;
-
-    fn try_from(c: char) -> Result<Self, char> {
-        match c {
-            '<' | '>' => Ok(Self::AngleBrackets),
-            //TODO: should B be different?
-            'b' | 'B' => Ok(Self::Block),
-            '{' | '}' => Ok(Self::CurlyBrackets),
-            '"' => Ok(Self::DoubleQuotes),
-            'p' => Ok(Self::Paragraph),
-            '(' | ')' => Ok(Self::Parentheses),
-            's' => Ok(Self::Sentence),
-            '\'' => Ok(Self::SingleQuotes),
-            '[' | ']' => Ok(Self::SquareBrackets),
-            't' => Ok(Self::Tag),
-            '`' => Ok(Self::Ticks),
-            'w' => Ok(Self::Word),
-            _ => Err(c),
-        }
-    }
+    Word(ViWord),
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ViNormal {
     count: Option<u32>,
-    op: Option<ViOperator>,
+    operator: Option<ViOperator>,
+    motion: Option<ViMotion>,
+    text_object: Option<ViTextObject>,
+    selection: bool,
 }
 
 impl ViNormal {
@@ -189,18 +187,60 @@ impl ViNormal {
         }
     }
 
-    /// Run operation, resetting it to defaults
-    pub fn run<F: FnMut(Event)>(&mut self, mut f: F) {
-        let count = self.count.take().unwrap_or(1);
-        let op = self.op.take();
-        match op {
-            Some(_) => {
-                //TODO: handle ops
+    /// Set motion
+    pub fn motion<F: FnMut(Event)>(&mut self, motion: ViMotion, f: &mut F) {
+        self.motion = Some(motion);
+        self.run(f);
+    }
+
+    /// Set operator, may set motion if operator is doubled like `dd`
+    pub fn operator<F: FnMut(Event)>(&mut self, operator: ViOperator, f: &mut F) {
+        if self.operator == Some(operator) {
+            self.motion = Some(ViMotion::Line);
+        } else {
+            self.operator = Some(operator);
+        }
+        self.run(f);
+    }
+
+    /// Set text object and return true if supported by the motion
+    pub fn text_object<F: FnMut(Event)>(&mut self, text_object: ViTextObject, f: &mut F) -> bool {
+        if !self.motion.map_or(false, |motion| motion.text_object()) {
+            // Did not need text object
+            return false;
+        }
+
+        // Needed text object
+        self.text_object = Some(text_object);
+        self.run(f);
+        true
+    }
+
+    /// Run operation, resetting it to defaults if it runs
+    pub fn run<F: FnMut(Event)>(&mut self, f: &mut F) -> bool {
+        match self.motion {
+            Some(motion) => {
+                if motion.text_object() && self.text_object.is_none() {
+                    // After or inside requires a text object
+                    return false;
+                }
             }
             None => {
-                // Just a move
+                if !self.selection {
+                    // No motion requires a selection
+                    return false;
+                }
             }
         }
+
+        let count = self.count.take().unwrap_or(1);
+        let operator = self.operator.unwrap_or(ViOperator::Move);
+        let motion = self.motion.take().unwrap_or(ViMotion::Selection);
+        let text_object = self.text_object.take();
+
+        f(Event::Operator(count, operator, motion, text_object));
+
+        true
     }
 }
 
@@ -210,6 +250,8 @@ pub enum ViMode {
     Normal(ViNormal),
     /// Insert mode
     Insert,
+    /// Replace mode
+    Replace,
     /// Command mode
     Command { value: String },
     /// Search mode
@@ -242,249 +284,293 @@ impl Parser for ViParser {
     }
 
     fn parse<F: FnMut(Event)>(&mut self, c: char, selection: bool, mut f: F) {
+        // Makes managing callbacks easier
+        let f = &mut f;
         match self.mode {
-            ViMode::Normal(ref mut normal) => match c {
-                // Enter insert mode after cursor
-                'a' => {
-                    f(Event::Right);
-                    self.mode = ViMode::Insert;
-                }
-                // Enter insert mode at end of line
-                'A' => {
-                    f(Event::End);
-                    self.mode = ViMode::Insert;
-                }
-                // Previous word
-                'b' => {
-                    //TODO: WORD vs word, iterate by vi word rules
-                    normal.repeat(|_| f(Event::PreviousWord));
-                }
-                // Previous WORD
-                'B' => {
-                    //TODO: WORD vs word, iterate by vi word rules
-                    normal.repeat(|_| f(Event::PreviousWord));
-                }
-                // Change mode
-                'c' => {
-                    /*TODO
-                    if self.editor.select_opt().is_some() {
-                        f(Event::Delete);
-                        self.mode = ViMode::Insert;
-                    } else {
-                        //TODO: change to next cursor movement
+            ViMode::Normal(ref mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    // Enter insert mode after cursor (if not awaiting text object)
+                    'a' => {
+                        if normal.operator.is_some() {
+                            normal.motion(ViMotion::Around, f);
+                        } else {
+                            f(Event::Right);
+                            self.mode = ViMode::Insert;
+                        }
                     }
-                    */
-                }
-                //TODO: Change to end of line
-                'C' => {}
-                // Delete mode
-                'd' => {
-                    /*TODO
-                    if self.editor.select_opt().is_some() {
-                        f(Event::Delete);
-                    } else {
-                        //TODO: delete to next cursor movement
-                    }
-                    */
-                }
-                //TODO: Delete to end of line
-                'D' => {}
-                // End of word
-                'e' => {
-                    //TODO: WORD vs word, iterate by vi word rules
-                    normal.repeat(|_| f(Event::NextWord));
-                }
-                // End of WORD
-                'E' => {
-                    //TODO: WORD vs word, iterate by vi word rules
-                    normal.repeat(|_| f(Event::NextWord));
-                }
-                //TODO: Find char forwards
-                'f' => {}
-                //TODO: Find char backwords
-                'F' => {}
-                //TODO: Extra commands
-                'g' => {}
-                // Goto line (or end of file)
-                'G' => match normal.count.take() {
-                    Some(line) => f(Event::GotoLine(line)),
-                    None => f(Event::GotoEof),
-                },
-                // Left
-                'h' | BACKSPACE => normal.repeat(|_| f(Event::Left)),
-                // Top of screen
-                'H' => f(Event::ScreenHigh),
-                // Enter insert mode at cursor
-                'i' => {
-                    self.mode = ViMode::Insert;
-                }
-                // Enter insert mode at start of line
-                'I' => {
-                    f(Event::SoftHome);
-                    self.mode = ViMode::Insert;
-                }
-                // Down
-                'j' => normal.repeat(|_| f(Event::Down)),
-                //TODO: Join lines
-                'J' => {}
-                // Up
-                'k' => normal.repeat(|_| f(Event::Up)),
-                //TODO: Look up keyword (vim looks up word under cursor in man pages)
-                'K' => {}
-                // Right
-                'l' | ' ' => normal.repeat(|_| f(Event::Right)),
-                // Bottom of screen
-                'L' => f(Event::ScreenLow),
-                //TODO: Set mark
-                'm' => {}
-                // Middle of screen
-                'M' => f(Event::ScreenMiddle),
-                // Next search item
-                'n' => normal.repeat(|_| f(Event::NextSearch)),
-                // Previous search item
-                'N' => normal.repeat(|_| f(Event::PreviousSearch)),
-                // Create line after and enter insert mode
-                'o' => {
-                    f(Event::End);
-                    f(Event::NewLine);
-                    self.mode = ViMode::Insert;
-                }
-                // Create line before and enter insert mode
-                'O' => {
-                    f(Event::Home);
-                    f(Event::NewLine);
-                    f(Event::Up);
-                    self.mode = ViMode::Insert;
-                }
-                // Paste after
-                'p' => {
-                    f(Event::Right);
-                    f(Event::Paste);
-                }
-                // Paste before
-                'P' => {
-                    f(Event::Paste);
-                }
-                //TODO: q, Q
-                //TODO: Replace char
-                'r' => {}
-                //TODO: Replace mode
-                'R' => {}
-                // Substitute char
-                's' => {
-                    normal.repeat(|_| f(Event::Delete));
-                    self.mode = ViMode::Insert;
-                }
-                //TODO: Substitute line
-                'S' => {}
-                //TODO: Until character forwards
-                't' => {}
-                //TODO: Until character backwards
-                'T' => {}
-                // Undo
-                'u' => {
-                    f(Event::Undo);
-                }
-                //TODO: U
-                // Enter visual mode
-                'v' => {
-                    /*TODO
-                    if self.editor.select_opt().is_some() {
-                        self.editor.set_select_opt(None);
-                    } else {
-                        self.editor.set_select_opt(Some(self.editor.cursor()));
-                    }
-                    */
-                }
-                // Enter line visual mode
-                'V' => {
-                    /*TODO
-                    if self.editor.select_opt().is_some() {
-                        self.editor.set_select_opt(None);
-                    } else {
-                        f(Event::Home);
-                        self.editor.set_select_opt(Some(self.editor.cursor()));
-                        //TODO: set cursor_x_opt to max
+                    // Enter insert mode at end of line
+                    'A' => {
                         f(Event::End);
+                        self.mode = ViMode::Insert;
                     }
-                    */
+                    // Previous word (if not text object)
+                    'b' => {
+                        if !normal.text_object(ViTextObject::Block, f) {
+                            normal.motion(ViMotion::PreviousWordStart(ViWord::Small), f);
+                        }
+                    }
+                    // Previous WORD (if not text object)
+                    //TODO: should this TextObject be different?
+                    'B' => {
+                        if !normal.text_object(ViTextObject::Block, f) {
+                            normal.motion(ViMotion::PreviousWordStart(ViWord::Big), f);
+                        }
+                    }
+                    // Change mode
+                    'c' => {
+                        normal.operator(ViOperator::Change, f);
+                    }
+                    //TODO: Change to end of line
+                    'C' => {}
+                    // Delete mode
+                    'd' => {
+                        normal.operator(ViOperator::Delete, f);
+                    }
+                    //TODO: Delete to end of line
+                    'D' => {}
+                    // End of word
+                    'e' => normal.motion(ViMotion::NextWordEnd(ViWord::Small), f),
+                    // End of WORD
+                    'E' => normal.motion(ViMotion::NextWordEnd(ViWord::Big), f),
+                    //TODO: Find char forwards
+                    'f' => {}
+                    //TODO: Find char backwords
+                    'F' => {}
+                    //TODO: Extra commands
+                    'g' => {}
+                    // Goto line (or end of file)
+                    'G' => match normal.count.take() {
+                        Some(line) => f(Event::GotoLine(line)),
+                        None => f(Event::GotoEof),
+                    },
+                    // Left
+                    'h' | BACKSPACE => normal.motion(ViMotion::Left, f),
+                    // Top of screen
+                    'H' => f(Event::ScreenHigh),
+                    // Enter insert mode at cursor (if not awaiting text object)
+                    'i' => {
+                        if normal.operator.is_some() {
+                            normal.motion(ViMotion::Inside, f);
+                        } else {
+                            self.mode = ViMode::Insert;
+                        }
+                    }
+                    // Enter insert mode at start of line
+                    'I' => {
+                        f(Event::SoftHome);
+                        self.mode = ViMode::Insert;
+                    }
+                    // Down
+                    'j' => normal.motion(ViMotion::Down, f),
+                    //TODO: Join lines
+                    'J' => {}
+                    // Up
+                    'k' => normal.motion(ViMotion::Up, f),
+                    //TODO: Look up keyword (vim looks up word under cursor in man pages)
+                    'K' => {}
+                    // Right
+                    'l' | ' ' => normal.motion(ViMotion::Right, f),
+                    // Bottom of screen
+                    'L' => f(Event::ScreenLow),
+                    //TODO: Set mark
+                    'm' => {}
+                    // Middle of screen
+                    'M' => f(Event::ScreenMiddle),
+                    // Next search item
+                    'n' => normal.repeat(|_| f(Event::NextSearch)),
+                    // Previous search item
+                    'N' => normal.repeat(|_| f(Event::PreviousSearch)),
+                    // Create line after and enter insert mode
+                    'o' => {
+                        f(Event::End);
+                        f(Event::NewLine);
+                        self.mode = ViMode::Insert;
+                    }
+                    // Create line before and enter insert mode
+                    'O' => {
+                        f(Event::Home);
+                        f(Event::NewLine);
+                        f(Event::Up);
+                        self.mode = ViMode::Insert;
+                    }
+                    // Paste after (if not text object)
+                    'p' => {
+                        if !normal.text_object(ViTextObject::Paragraph, f) {
+                            f(Event::Right);
+                            f(Event::Paste);
+                        }
+                    }
+                    // Paste before
+                    'P' => {
+                        f(Event::Paste);
+                    }
+                    //TODO: q, Q
+                    //TODO: Replace char
+                    'r' => {}
+                    //TODO: Replace mode
+                    'R' => {
+                        self.mode = ViMode::Replace;
+                    }
+                    // Substitute char (if not text object)
+                    's' => {
+                        if !normal.text_object(ViTextObject::Sentence, f) {
+                            normal.repeat(|_| f(Event::Delete));
+                            self.mode = ViMode::Insert;
+                        }
+                    }
+                    //TODO: Substitute line
+                    'S' => {}
+                    //TODO: Until character forwards (if not text object)
+                    't' => if !normal.text_object(ViTextObject::Tag, f) {},
+                    //TODO: Until character backwards
+                    'T' => {}
+                    // Undo
+                    'u' => {
+                        f(Event::Undo);
+                    }
+                    //TODO: U
+                    // Enter visual mode
+                    'v' => {
+                        /*TODO
+                        if self.editor.select_opt().is_some() {
+                            self.editor.set_select_opt(None);
+                        } else {
+                            self.editor.set_select_opt(Some(self.editor.cursor()));
+                        }
+                        */
+                    }
+                    // Enter line visual mode
+                    'V' => {
+                        /*TODO
+                        if self.editor.select_opt().is_some() {
+                            self.editor.set_select_opt(None);
+                        } else {
+                            f(Event::Home);
+                            self.editor.set_select_opt(Some(self.editor.cursor()));
+                            //TODO: set cursor_x_opt to max
+                            f(Event::End);
+                        }
+                        */
+                    }
+                    // Next word (if not text object)
+                    'w' => {
+                        if !normal.text_object(ViTextObject::Word(ViWord::Small), f) {
+                            normal.motion(ViMotion::NextWordStart(ViWord::Small), f);
+                        }
+                    }
+                    // Next WORD (if not text object)
+                    'W' => {
+                        if !normal.text_object(ViTextObject::Word(ViWord::Big), f) {
+                            normal.motion(ViMotion::NextWordStart(ViWord::Big), f);
+                        }
+                    }
+                    // Remove character at cursor
+                    'x' => normal.repeat(|_| f(Event::Delete)),
+                    // Remove character before cursor
+                    'X' => normal.repeat(|_| f(Event::Backspace)),
+                    // Yank
+                    'y' => normal.operator(ViOperator::Yank, f),
+                    //TODO: Yank line
+                    'Y' => {}
+                    //TODO: z, Z
+                    // Go to start of line
+                    '0' => match normal.count {
+                        Some(ref mut count) => {
+                            *count = count.saturating_mul(10);
+                        }
+                        None => {
+                            f(Event::Home);
+                        }
+                    },
+                    // Count of next action
+                    '1'..='9' => {
+                        let number = (c as u32).saturating_sub('0' as u32);
+                        normal.count = Some(match normal.count.take() {
+                            Some(count) => count.saturating_mul(10).saturating_add(number),
+                            None => number,
+                        });
+                    }
+                    // TODO (if not text object)
+                    '`' => if !normal.text_object(ViTextObject::Ticks, f) {},
+                    // Swap case
+                    '~' => normal.operator(ViOperator::SwapCase, f),
+                    // Go to end of line
+                    '$' => f(Event::End),
+                    // Go to start of line after whitespace
+                    '^' => f(Event::SoftHome),
+                    // TODO (if not text object)
+                    '(' => if !normal.text_object(ViTextObject::Parentheses, f) {},
+                    // TODO (if not text object)
+                    ')' => if !normal.text_object(ViTextObject::Parentheses, f) {},
+                    // Auto indent
+                    '=' => normal.operator(ViOperator::AutoIndent, f),
+                    // TODO (if not text object)
+                    '[' => if !normal.text_object(ViTextObject::SquareBrackets, f) {},
+                    // TODO (if not text object)
+                    '{' => if !normal.text_object(ViTextObject::CurlyBrackets, f) {},
+                    // TODO (if not text object)
+                    ']' => if !normal.text_object(ViTextObject::SquareBrackets, f) {},
+                    // TODO (if not text object)
+                    '}' => if !normal.text_object(ViTextObject::CurlyBrackets, f) {},
+                    // Enter command mode
+                    ':' => {
+                        self.mode = ViMode::Command {
+                            value: String::new(),
+                        };
+                    }
+                    //TODO: ';'
+                    //TODO (if not text object)
+                    '\'' => if !normal.text_object(ViTextObject::SingleQuotes, f) {},
+                    '"' => if !normal.text_object(ViTextObject::DoubleQuotes, f) {},
+                    // Unindent (if not text object)
+                    '<' => {
+                        if !normal.text_object(ViTextObject::AngleBrackets, f) {
+                            normal.operator(ViOperator::ShiftLeft, f);
+                        }
+                    }
+                    // Indent (if not text object)
+                    '>' => {
+                        if !normal.text_object(ViTextObject::AngleBrackets, f) {
+                            normal.operator(ViOperator::ShiftRight, f);
+                        }
+                    }
+                    // Enter search mode
+                    '/' => {
+                        self.mode = ViMode::Search {
+                            value: String::new(),
+                            forwards: true,
+                        };
+                    }
+                    // Enter search backwards mode
+                    '?' => {
+                        self.mode = ViMode::Search {
+                            value: String::new(),
+                            forwards: false,
+                        };
+                    }
+                    ENTER => {
+                        normal.repeat(|_| f(Event::Down));
+                        f(Event::SoftHome);
+                    }
+                    ESCAPE => f(Event::Escape),
+                    _ => {}
                 }
-                // Next word
-                'w' => {
-                    //TODO: WORD vs word, iterate by vi word rules
-                    normal.repeat(|_| f(Event::NextWord));
-                }
-                // Next WORD
-                'W' => {
-                    //TODO: WORD vs word, iterate by vi word rules
-                    normal.repeat(|_| f(Event::NextWord));
-                }
-                // Remove character at cursor
-                'x' => normal.repeat(|_| f(Event::Delete)),
-                // Remove character before cursor
-                'X' => normal.repeat(|_| f(Event::Backspace)),
-                // Yank
-                'y' => f(Event::Copy),
-                //TODO: Yank line
-                'Y' => {}
-                //TODO: z, Z
-                // Go to start of line
-                '0' => f(Event::Home),
-                // Count of next action
-                '1'..='9' => {
-                    let number = (c as u32).saturating_sub('0' as u32);
-                    normal.count = Some(match normal.count.take() {
-                        Some(mut count) => count.saturating_mul(10).saturating_add(number),
-                        None => number,
-                    });
-                }
-                // Go to end of line
-                '$' => f(Event::End),
-                // Go to start of line after whitespace
-                '^' => f(Event::SoftHome),
-                // Enter command mode
-                ':' => {
-                    self.mode = ViMode::Command {
-                        value: String::new(),
-                    };
-                }
-                // Indent
-                '>' => {
-                    //TODO: selection
-                    normal.repeat(|_| f(Event::Indent));
-                }
-                // Unindent
-                '<' => {
-                    //TODO: selection
-                    normal.repeat(|_| f(Event::Unindent));
-                }
-                // Enter search mode
-                '/' => {
-                    self.mode = ViMode::Search {
-                        value: String::new(),
-                        forwards: true,
-                    };
-                }
-                // Enter search backwards mode
-                '?' => {
-                    self.mode = ViMode::Search {
-                        value: String::new(),
-                        forwards: false,
-                    };
-                }
-                ENTER => {
-                    normal.repeat(|_| f(Event::Down));
-                    f(Event::SoftHome);
-                }
-                ESCAPE => f(Event::Escape),
-                _ => (),
-            },
+            }
             ViMode::Insert => match c {
                 ESCAPE => {
-                    f(Event::LeftIfPossible);
+                    f(Event::Left);
                     self.mode = ViMode::normal();
                 }
                 _ => f(Event::Insert(c)),
+            },
+            ViMode::Replace => match c {
+                ESCAPE => {
+                    f(Event::Left);
+                    self.mode = ViMode::normal();
+                }
+                _ => f(Event::Replace(c)),
             },
             ViMode::Command { ref mut value } => match c {
                 ESCAPE => {

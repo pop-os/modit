@@ -104,12 +104,89 @@ pub enum Word {
     Upper,
 }
 
-impl Word {
-    /// Returns true if c is part of Word
-    pub fn matches(&self, c: char) -> bool {
-        match self {
-            Word::Lower => !c.is_alphanumeric(),
-            Word::Upper => !c.is_whitespace(),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WordChar {
+    Blank,
+    Keyword,
+    NonBlank,
+}
+
+#[derive(Debug)]
+pub struct WordIter<'a> {
+    line: &'a str,
+    word: Word,
+    index: usize,
+}
+
+impl<'a> WordIter<'a> {
+    pub fn new(line: &'a str, word: Word) -> Self {
+        Self {
+            line,
+            word,
+            index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for WordIter<'a> {
+    type Item = (usize, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut last_kind = WordChar::Blank;
+        let mut start_opt = None;
+        let mut end_opt = None;
+        for (sub_index, c) in self.line.get(self.index..)?.char_indices() {
+            let index = self.index.checked_add(sub_index)?;
+
+            let kind = match self.word {
+                Word::Lower => {
+                    // A "word" is either a group of letters, digits, and underscores,
+                    // or a sequence of other non-blank characters
+                    if c.is_whitespace() {
+                        WordChar::Blank
+                    } else if c.is_alphanumeric() || c == '_' {
+                        WordChar::Keyword
+                    } else {
+                        WordChar::NonBlank
+                    }
+                }
+                Word::Upper => {
+                    if c.is_whitespace() {
+                        WordChar::Blank
+                    } else {
+                        WordChar::NonBlank
+                    }
+                }
+            };
+
+            if kind != last_kind {
+                // Word either starts or ends
+                match kind {
+                    WordChar::Blank => {
+                        end_opt = Some(index);
+                        break;
+                    }
+                    _ => {
+                        if start_opt.is_some() {
+                            end_opt = Some(index);
+                            break;
+                        } else {
+                            start_opt = Some(index);
+                        }
+                    }
+                }
+                last_kind = kind;
+            }
+        }
+
+        match start_opt {
+            Some(start) => {
+                let end = end_opt.unwrap_or(self.line.len());
+                self.index = end;
+                let word = self.line.get(start..end)?;
+                Some((start, word))
+            }
+            None => None,
         }
     }
 }
@@ -552,7 +629,7 @@ impl Parser for ViParser {
                     }
                     ESCAPE => {
                         *normal = ViNormal::default();
-                        f(Event::Escape)
+                        f(Event::Escape);
                     }
                     _ => {}
                 }

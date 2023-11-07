@@ -78,7 +78,7 @@ pub enum Event {
     /// Undo last action
     Undo,
     //TODO: special hack, clean up!
-    Operator(u32, Operator, Motion, Option<TextObject>),
+    Operator(usize, Operator, Motion, Option<TextObject>),
 }
 
 pub trait Parser {
@@ -197,7 +197,7 @@ pub enum Motion {
     Down,
     End,
     GotoEof,
-    GotoLine(u32),
+    GotoLine(usize),
     Home,
     Inside,
     Left,
@@ -245,7 +245,7 @@ pub enum TextObject {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ViNormal {
-    count: Option<u32>,
+    count: Option<usize>,
     operator: Option<Operator>,
     motion: Option<Motion>,
     text_object: Option<TextObject>,
@@ -254,7 +254,7 @@ pub struct ViNormal {
 
 impl ViNormal {
     /// Repeat the provided function count times, resetting count after
-    pub fn repeat<F: FnMut(u32)>(&mut self, mut f: F) {
+    pub fn repeat<F: FnMut(usize)>(&mut self, mut f: F) {
         for i in 0..self.count.take().unwrap_or(1) {
             f(i);
         }
@@ -321,6 +321,12 @@ impl ViNormal {
 pub enum ViMode {
     /// Normal mode
     Normal(ViNormal),
+    /// Waiting for g command
+    LowerG(ViNormal),
+    /// Waiting for z command
+    LowerZ(ViNormal),
+    /// Waiting for z command
+    UpperZ(ViNormal),
     /// Insert mode
     Insert,
     /// Replace mode
@@ -411,8 +417,10 @@ impl Parser for ViParser {
                     'f' => {}
                     //TODO: Find char backwords
                     'F' => {}
-                    //TODO: Extra commands
-                    'g' => {}
+                    // g commands
+                    'g' => {
+                        self.mode = ViMode::LowerG(*normal);
+                    }
                     // Goto line (or end of file)
                     'G' => match normal.count.take() {
                         Some(line) => normal.motion(Motion::GotoLine(line), f),
@@ -547,7 +555,14 @@ impl Parser for ViParser {
                     'y' => normal.operator(Operator::Yank, f),
                     //TODO: Yank line
                     'Y' => {}
-                    //TODO: z, Z
+                    // z commands
+                    'z' => {
+                        self.mode = ViMode::LowerZ(*normal);
+                    }
+                    // Z commands
+                    'Z' => {
+                        self.mode = ViMode::UpperZ(*normal);
+                    }
                     // Go to start of line
                     '0' => match normal.count {
                         Some(ref mut count) => {
@@ -559,7 +574,7 @@ impl Parser for ViParser {
                     },
                     // Count of next action
                     '1'..='9' => {
-                        let number = (c as u32).saturating_sub('0' as u32);
+                        let number = (c as u32).saturating_sub('0' as u32) as usize;
                         normal.count = Some(match normal.count.take() {
                             Some(count) => count.saturating_mul(10).saturating_add(number),
                             None => number,
@@ -633,6 +648,41 @@ impl Parser for ViParser {
                     }
                     _ => {}
                 }
+            }
+            ViMode::LowerG(mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    // Previous word end
+                    'e' => normal.motion(Motion::PreviousWordEnd(Word::Lower), f),
+                    // Prevous WORD end
+                    'E' => normal.motion(Motion::PreviousWordEnd(Word::Upper), f),
+                    'g' => match normal.count.take() {
+                        Some(line) => normal.motion(Motion::GotoLine(line), f),
+                        None => normal.motion(Motion::GotoLine(1), f),
+                    },
+                    //TODO: more g commands
+                    _ => {}
+                }
+                self.mode = ViMode::Normal(normal);
+            }
+            ViMode::LowerZ(mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    //TODO: more z commands
+                    _ => {}
+                }
+                self.mode = ViMode::Normal(normal);
+            }
+            ViMode::UpperZ(mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    //TODO: more Z commands
+                    _ => {}
+                }
+                self.mode = ViMode::Normal(normal);
             }
             ViMode::Insert => match c {
                 ESCAPE => {

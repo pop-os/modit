@@ -48,25 +48,12 @@ pub const TAB: char = '\t';
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
-    /// Move cursor left
-    Left,
-    /// Move cursor right
-    Right,
-    /// Move cursor up
-    Up,
-    /// Move cursor down
-    Down,
-    /// Move cursor to start of line
-    Home,
-    /// Move cursor to start of line, skipping whitespace
-    SoftHome,
-    /// Move cursor to end of line
-    End,
+    /// Notify of a mode change requiring redraw
+    Redraw,
+    /// Escape key
     Escape,
     /// Insert character at cursor
     Insert(char),
-    /// Replace character at cursor, moving cursor to the next
-    Replace(char),
     /// Create new line
     NewLine,
     /// Delete text behind cursor
@@ -77,8 +64,8 @@ pub enum Event {
     Paste,
     /// Undo last action
     Undo,
-    //TODO: special hack, clean up!
-    Operator(usize, Operator, Motion, Option<TextObject>),
+    /// A fully composed command
+    Cmd(usize, Operator, Motion, Option<TextObject>),
 }
 
 pub trait Parser {
@@ -248,7 +235,7 @@ pub enum TextObject {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ViNormal {
+pub struct ViCmd {
     count: Option<usize>,
     operator: Option<Operator>,
     motion: Option<Motion>,
@@ -256,7 +243,7 @@ pub struct ViNormal {
     selection: bool,
 }
 
-impl ViNormal {
+impl ViCmd {
     /// Repeat the provided function count times, resetting count after
     pub fn repeat<F: FnMut(usize)>(&mut self, mut f: F) {
         for i in 0..self.count.take().unwrap_or(1) {
@@ -324,21 +311,21 @@ impl ViNormal {
 #[derive(Debug)]
 pub enum ViMode {
     /// Normal mode
-    Normal(ViNormal),
+    Normal(ViCmd),
     /// Waiting for f character
-    LowerF(ViNormal),
+    LowerF(ViCmd),
     /// Waiting for F character
-    UpperF(ViNormal),
+    UpperF(ViCmd),
     /// Waiting for g command
-    LowerG(ViNormal),
+    LowerG(ViCmd),
     /// Waiting for t character
-    LowerT(ViNormal),
+    LowerT(ViCmd),
     /// Waiting for T character
-    UpperT(ViNormal),
+    UpperT(ViCmd),
     /// Waiting for z command
-    LowerZ(ViNormal),
+    LowerZ(ViCmd),
     /// Waiting for z command
-    UpperZ(ViNormal),
+    UpperZ(ViCmd),
     /// Insert mode
     Insert,
     /// Replace mode
@@ -352,7 +339,7 @@ pub enum ViMode {
 impl ViMode {
     // Default normal state
     pub fn normal() -> Self {
-        Self::Normal(ViNormal::default())
+        Self::Normal(ViCmd::default())
     }
 }
 
@@ -380,124 +367,124 @@ impl Parser for ViParser {
         // Makes managing callbacks easier
         let f = &mut f;
         match self.mode {
-            ViMode::Normal(ref mut normal) => {
+            ViMode::Normal(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     // Enter insert mode after cursor (if not awaiting text object)
                     'a' => {
-                        if normal.operator.is_some() {
-                            normal.motion(Motion::Around, f);
+                        if cmd.operator.is_some() {
+                            cmd.motion(Motion::Around, f);
                         } else {
-                            f(Event::Right);
+                            ViCmd::default().motion(Motion::Right, f);
                             self.mode = ViMode::Insert;
                         }
                     }
                     // Enter insert mode at end of line
                     'A' => {
-                        f(Event::End);
+                        ViCmd::default().motion(Motion::End, f);
                         self.mode = ViMode::Insert;
                     }
                     // Previous word (if not text object)
                     'b' => {
-                        if !normal.text_object(TextObject::Block, f) {
-                            normal.motion(Motion::PreviousWordStart(Word::Lower), f);
+                        if !cmd.text_object(TextObject::Block, f) {
+                            cmd.motion(Motion::PreviousWordStart(Word::Lower), f);
                         }
                     }
                     // Previous WORD (if not text object)
                     //TODO: should this TextObject be different?
                     'B' => {
-                        if !normal.text_object(TextObject::Block, f) {
-                            normal.motion(Motion::PreviousWordStart(Word::Upper), f);
+                        if !cmd.text_object(TextObject::Block, f) {
+                            cmd.motion(Motion::PreviousWordStart(Word::Upper), f);
                         }
                     }
                     // Change mode
                     'c' => {
-                        normal.operator(Operator::Change, f);
+                        cmd.operator(Operator::Change, f);
                     }
                     //TODO: Change to end of line
                     'C' => {}
                     // Delete mode
                     'd' => {
-                        normal.operator(Operator::Delete, f);
+                        cmd.operator(Operator::Delete, f);
                     }
                     //TODO: Delete to end of line
                     'D' => {}
                     // End of word
-                    'e' => normal.motion(Motion::NextWordEnd(Word::Lower), f),
+                    'e' => cmd.motion(Motion::NextWordEnd(Word::Lower), f),
                     // End of WORD
-                    'E' => normal.motion(Motion::NextWordEnd(Word::Upper), f),
+                    'E' => cmd.motion(Motion::NextWordEnd(Word::Upper), f),
                     // Find char forwards
                     'f' => {
-                        self.mode = ViMode::LowerF(*normal);
+                        self.mode = ViMode::LowerF(*cmd);
                     }
                     // Find char backwords
                     'F' => {
-                        self.mode = ViMode::UpperF(*normal);
+                        self.mode = ViMode::UpperF(*cmd);
                     }
                     // g commands
                     'g' => {
-                        self.mode = ViMode::LowerG(*normal);
+                        self.mode = ViMode::LowerG(*cmd);
                     }
                     // Goto line (or end of file)
-                    'G' => match normal.count.take() {
-                        Some(line) => normal.motion(Motion::GotoLine(line), f),
-                        None => normal.motion(Motion::GotoEof, f),
+                    'G' => match cmd.count.take() {
+                        Some(line) => cmd.motion(Motion::GotoLine(line), f),
+                        None => cmd.motion(Motion::GotoEof, f),
                     },
                     // Left
-                    'h' | BACKSPACE => normal.motion(Motion::Left, f),
+                    'h' | BACKSPACE => cmd.motion(Motion::Left, f),
                     // Top of screen
-                    'H' => normal.motion(Motion::ScreenHigh, f),
+                    'H' => cmd.motion(Motion::ScreenHigh, f),
                     // Enter insert mode at cursor (if not awaiting text object)
                     'i' => {
-                        if normal.operator.is_some() {
-                            normal.motion(Motion::Inside, f);
+                        if cmd.operator.is_some() {
+                            cmd.motion(Motion::Inside, f);
                         } else {
                             self.mode = ViMode::Insert;
                         }
                     }
                     // Enter insert mode at start of line
                     'I' => {
-                        f(Event::SoftHome);
+                        ViCmd::default().motion(Motion::SoftHome, f);
                         self.mode = ViMode::Insert;
                     }
                     // Down
-                    'j' => normal.motion(Motion::Down, f),
+                    'j' => cmd.motion(Motion::Down, f),
                     //TODO: Join lines
                     'J' => {}
                     // Up
-                    'k' => normal.motion(Motion::Up, f),
+                    'k' => cmd.motion(Motion::Up, f),
                     //TODO: Look up keyword (vim looks up word under cursor in man pages)
                     'K' => {}
                     // Right
-                    'l' | ' ' => normal.motion(Motion::Right, f),
+                    'l' | ' ' => cmd.motion(Motion::Right, f),
                     // Bottom of screen
-                    'L' => normal.motion(Motion::ScreenLow, f),
+                    'L' => cmd.motion(Motion::ScreenLow, f),
                     //TODO: Set mark
                     'm' => {}
                     // Middle of screen
-                    'M' => normal.motion(Motion::ScreenMiddle, f),
+                    'M' => cmd.motion(Motion::ScreenMiddle, f),
                     // Next search item
-                    'n' => normal.motion(Motion::NextSearch, f),
+                    'n' => cmd.motion(Motion::NextSearch, f),
                     // Previous search item
-                    'N' => normal.motion(Motion::PreviousSearch, f),
+                    'N' => cmd.motion(Motion::PreviousSearch, f),
                     // Create line after and enter insert mode
                     'o' => {
-                        f(Event::End);
+                        ViCmd::default().motion(Motion::End, f);
                         f(Event::NewLine);
                         self.mode = ViMode::Insert;
                     }
                     // Create line before and enter insert mode
                     'O' => {
-                        f(Event::Home);
+                        ViCmd::default().motion(Motion::Home, f);
                         f(Event::NewLine);
-                        f(Event::Up);
+                        ViCmd::default().motion(Motion::Up, f);
                         self.mode = ViMode::Insert;
                     }
                     // Paste after (if not text object)
                     'p' => {
-                        if !normal.text_object(TextObject::Paragraph, f) {
-                            f(Event::Right);
+                        if !cmd.text_object(TextObject::Paragraph, f) {
+                            ViCmd::default().motion(Motion::Right, f);
                             f(Event::Paste);
                         }
                     }
@@ -514,8 +501,8 @@ impl Parser for ViParser {
                     }
                     // Substitute char (if not text object)
                     's' => {
-                        if !normal.text_object(TextObject::Sentence, f) {
-                            normal.repeat(|_| f(Event::Delete));
+                        if !cmd.text_object(TextObject::Sentence, f) {
+                            cmd.repeat(|_| f(Event::Delete));
                             self.mode = ViMode::Insert;
                         }
                     }
@@ -523,13 +510,13 @@ impl Parser for ViParser {
                     'S' => {}
                     // Until character forwards (if not text object)
                     't' => {
-                        if !normal.text_object(TextObject::Tag, f) {
-                            self.mode = ViMode::LowerT(*normal);
+                        if !cmd.text_object(TextObject::Tag, f) {
+                            self.mode = ViMode::LowerT(*cmd);
                         }
                     }
                     // Until character backwards
                     'T' => {
-                        self.mode = ViMode::UpperT(*normal);
+                        self.mode = ViMode::UpperT(*cmd);
                     }
                     // Undo
                     'u' => {
@@ -561,75 +548,75 @@ impl Parser for ViParser {
                     }
                     // Next word (if not text object)
                     'w' => {
-                        if !normal.text_object(TextObject::Word(Word::Lower), f) {
-                            normal.motion(Motion::NextWordStart(Word::Lower), f);
+                        if !cmd.text_object(TextObject::Word(Word::Lower), f) {
+                            cmd.motion(Motion::NextWordStart(Word::Lower), f);
                         }
                     }
                     // Next WORD (if not text object)
                     'W' => {
-                        if !normal.text_object(TextObject::Word(Word::Upper), f) {
-                            normal.motion(Motion::NextWordStart(Word::Upper), f);
+                        if !cmd.text_object(TextObject::Word(Word::Upper), f) {
+                            cmd.motion(Motion::NextWordStart(Word::Upper), f);
                         }
                     }
                     // Remove character at cursor
-                    'x' | DELETE => normal.repeat(|_| f(Event::Delete)),
+                    'x' | DELETE => cmd.repeat(|_| f(Event::Delete)),
                     // Remove character before cursor
-                    'X' => normal.repeat(|_| f(Event::Backspace)),
+                    'X' => cmd.repeat(|_| f(Event::Backspace)),
                     // Yank
-                    'y' => normal.operator(Operator::Yank, f),
+                    'y' => cmd.operator(Operator::Yank, f),
                     //TODO: Yank line
                     'Y' => {}
                     // z commands
                     'z' => {
-                        self.mode = ViMode::LowerZ(*normal);
+                        self.mode = ViMode::LowerZ(*cmd);
                     }
                     // Z commands
                     'Z' => {
-                        self.mode = ViMode::UpperZ(*normal);
+                        self.mode = ViMode::UpperZ(*cmd);
                     }
                     // Go to start of line
-                    '0' => match normal.count {
+                    '0' => match cmd.count {
                         Some(ref mut count) => {
                             *count = count.saturating_mul(10);
                         }
                         None => {
-                            normal.motion(Motion::Home, f);
+                            cmd.motion(Motion::Home, f);
                         }
                     },
                     // Count of next action
                     '1'..='9' => {
                         let number = (c as u32).saturating_sub('0' as u32) as usize;
-                        normal.count = Some(match normal.count.take() {
+                        cmd.count = Some(match cmd.count.take() {
                             Some(count) => count.saturating_mul(10).saturating_add(number),
                             None => number,
                         });
                     }
                     // TODO (if not text object)
-                    '`' => if !normal.text_object(TextObject::Ticks, f) {},
+                    '`' => if !cmd.text_object(TextObject::Ticks, f) {},
                     // Swap case
-                    '~' => normal.operator(Operator::SwapCase, f),
+                    '~' => cmd.operator(Operator::SwapCase, f),
                     // Go to end of line
-                    '$' => normal.motion(Motion::End, f),
+                    '$' => cmd.motion(Motion::End, f),
                     // Go to start of line after whitespace
-                    '^' => normal.motion(Motion::SoftHome, f),
+                    '^' => cmd.motion(Motion::SoftHome, f),
                     // TODO (if not text object)
-                    '(' => if !normal.text_object(TextObject::Parentheses, f) {},
+                    '(' => if !cmd.text_object(TextObject::Parentheses, f) {},
                     // TODO (if not text object)
-                    ')' => if !normal.text_object(TextObject::Parentheses, f) {},
+                    ')' => if !cmd.text_object(TextObject::Parentheses, f) {},
                     // Auto indent
-                    '=' => normal.operator(Operator::AutoIndent, f),
+                    '=' => cmd.operator(Operator::AutoIndent, f),
                     // TODO (if not text object)
-                    '[' => if !normal.text_object(TextObject::SquareBrackets, f) {},
+                    '[' => if !cmd.text_object(TextObject::SquareBrackets, f) {},
                     // TODO (if not text object)
-                    '{' => if !normal.text_object(TextObject::CurlyBrackets, f) {},
+                    '{' => if !cmd.text_object(TextObject::CurlyBrackets, f) {},
                     // TODO (if not text object)
-                    ']' => if !normal.text_object(TextObject::SquareBrackets, f) {},
+                    ']' => if !cmd.text_object(TextObject::SquareBrackets, f) {},
                     // TODO (if not text object)
-                    '}' => if !normal.text_object(TextObject::CurlyBrackets, f) {},
+                    '}' => if !cmd.text_object(TextObject::CurlyBrackets, f) {},
                     // Repeat f/F/t/T
                     ';' => {
                         if let Some(motion) = self.semicolon_motion {
-                            normal.motion(motion, f);
+                            cmd.motion(motion, f);
                         }
                     }
                     // Enter command mode
@@ -640,18 +627,18 @@ impl Parser for ViParser {
                     }
                     //TODO: ';'
                     //TODO (if not text object)
-                    '\'' => if !normal.text_object(TextObject::SingleQuotes, f) {},
-                    '"' => if !normal.text_object(TextObject::DoubleQuotes, f) {},
+                    '\'' => if !cmd.text_object(TextObject::SingleQuotes, f) {},
+                    '"' => if !cmd.text_object(TextObject::DoubleQuotes, f) {},
                     // Unindent (if not text object)
                     '<' => {
-                        if !normal.text_object(TextObject::AngleBrackets, f) {
-                            normal.operator(Operator::ShiftLeft, f);
+                        if !cmd.text_object(TextObject::AngleBrackets, f) {
+                            cmd.operator(Operator::ShiftLeft, f);
                         }
                     }
                     // Indent (if not text object)
                     '>' => {
-                        if !normal.text_object(TextObject::AngleBrackets, f) {
-                            normal.operator(Operator::ShiftRight, f);
+                        if !cmd.text_object(TextObject::AngleBrackets, f) {
+                            cmd.operator(Operator::ShiftRight, f);
                         }
                     }
                     // Enter search mode
@@ -669,116 +656,131 @@ impl Parser for ViParser {
                         };
                     }
                     ENTER => {
-                        normal.repeat(|_| f(Event::Down));
-                        f(Event::SoftHome);
+                        cmd.motion(Motion::Down, f);
+                        cmd.motion(Motion::SoftHome, f);
                     }
                     ESCAPE => {
-                        *normal = ViNormal::default();
+                        *cmd = ViCmd::default();
                         f(Event::Escape);
                     }
                     _ => {}
                 }
             }
-            ViMode::LowerF(ref mut normal) => {
+            ViMode::LowerF(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
                         let motion = Motion::NextChar(c);
-                        normal.motion(motion, f);
+                        cmd.motion(motion, f);
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
-            ViMode::UpperF(ref mut normal) => {
+            ViMode::UpperF(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
                         let motion = Motion::PreviousChar(c);
-                        normal.motion(motion, f);
+                        cmd.motion(motion, f);
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
-            ViMode::LowerG(ref mut normal) => {
+            ViMode::LowerG(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     // Previous word end
-                    'e' => normal.motion(Motion::PreviousWordEnd(Word::Lower), f),
+                    'e' => cmd.motion(Motion::PreviousWordEnd(Word::Lower), f),
                     // Prevous WORD end
-                    'E' => normal.motion(Motion::PreviousWordEnd(Word::Upper), f),
-                    'g' => match normal.count.take() {
-                        Some(line) => normal.motion(Motion::GotoLine(line), f),
-                        None => normal.motion(Motion::GotoLine(1), f),
+                    'E' => cmd.motion(Motion::PreviousWordEnd(Word::Upper), f),
+                    'g' => match cmd.count.take() {
+                        Some(line) => cmd.motion(Motion::GotoLine(line), f),
+                        None => cmd.motion(Motion::GotoLine(1), f),
                     },
                     //TODO: more g commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
-            ViMode::LowerT(ref mut normal) => {
+            ViMode::LowerT(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
                         let motion = Motion::NextCharTill(c);
-                        normal.motion(motion, f);
+                        cmd.motion(motion, f);
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
-            ViMode::UpperT(ref mut normal) => {
+            ViMode::UpperT(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
                         let motion = Motion::PreviousCharTill(c);
-                        normal.motion(motion, f);
+                        cmd.motion(motion, f);
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
-            ViMode::LowerZ(ref mut normal) => {
+            ViMode::LowerZ(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     //TODO: more z commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
-            ViMode::UpperZ(ref mut normal) => {
+            ViMode::UpperZ(ref mut cmd) => {
                 //TODO: is there a better way to store this?
-                normal.selection = selection;
+                cmd.selection = selection;
                 match c {
                     //TODO: more Z commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(*normal);
+                self.mode = ViMode::Normal(*cmd);
             }
             ViMode::Insert => match c {
+                BACKSPACE => {
+                    f(Event::Backspace);
+                }
+                DELETE => {
+                    f(Event::Delete);
+                }
                 ESCAPE => {
-                    f(Event::Left);
+                    ViCmd::default().motion(Motion::Left, f);
                     self.mode = ViMode::normal();
                 }
                 _ => f(Event::Insert(c)),
             },
             ViMode::Replace => match c {
+                BACKSPACE => {
+                    f(Event::Backspace);
+                }
+                DELETE => {
+                    f(Event::Delete);
+                }
                 ESCAPE => {
-                    f(Event::Left);
+                    ViCmd::default().motion(Motion::Left, f);
                     self.mode = ViMode::normal();
                 }
-                _ => f(Event::Replace(c)),
+                _ => {
+                    f(Event::Delete);
+                    f(Event::Insert(c));
+                }
             },
             ViMode::Command { ref mut value } => match c {
                 ESCAPE => {
@@ -818,5 +820,7 @@ impl Parser for ViParser {
                 }
             },
         }
+        //TODO: optimize redraw
+        f(Event::Redraw);
     }
 }

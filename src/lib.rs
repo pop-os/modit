@@ -466,14 +466,20 @@ impl Parser for ViParser {
                     'c' => {
                         cmd.operator(Operator::Change, f);
                     }
-                    //TODO: Change to end of line
-                    'C' => {}
+                    // Change to end of line
+                    'C' => {
+                        cmd.operator(Operator::Change, f);
+                        cmd.motion(Motion::End, f);
+                    }
                     // Delete mode
                     'd' => {
                         cmd.operator(Operator::Delete, f);
                     }
-                    //TODO: Delete to end of line
-                    'D' => {}
+                    // Delete to end of line
+                    'D' => {
+                        cmd.operator(Operator::Change, f);
+                        cmd.motion(Motion::End, f);
+                    }
                     // End of word
                     'e' => cmd.motion(Motion::NextWordEnd(Word::Lower), f),
                     // End of WORD
@@ -572,8 +578,11 @@ impl Parser for ViParser {
                             self.mode = ViMode::Insert;
                         }
                     }
-                    //TODO: Substitute line
-                    'S' => {}
+                    // Substitute line
+                    'S' => {
+                        cmd.operator(Operator::Change, f);
+                        cmd.motion(Motion::Line, f);
+                    }
                     // Until character forwards (if not text object)
                     't' => {
                         if !cmd.text_object(TextObject::Tag, f) {
@@ -591,10 +600,11 @@ impl Parser for ViParser {
                     //TODO: U
                     // Enter visual mode
                     'v' => {
+                        //TODO: this is very hacky and has bugs
                         if self.mode == ViMode::Visual {
+                            f(Event::SelectClear);
                             self.mode = ViMode::Normal;
                         } else {
-                            //TODO: this is very hacky and has bugs
                             f(Event::SelectStart);
                             self.mode = ViMode::Visual;
                         }
@@ -602,6 +612,7 @@ impl Parser for ViParser {
                     // Enter line visual mode
                     'V' => {
                         if self.mode == ViMode::VisualLine {
+                            f(Event::SelectClear);
                             self.mode = ViMode::Normal;
                         } else {
                             //TODO: select by line
@@ -661,14 +672,27 @@ impl Parser for ViParser {
                     '`' => if !cmd.text_object(TextObject::Ticks, f) {},
                     // Swap case
                     '~' => cmd.operator(Operator::SwapCase, f),
+                    // TODO: !, @, #
                     // Go to end of line
                     '$' => cmd.motion(Motion::End, f),
+                    //TODO: %
                     // Go to start of line after whitespace
                     '^' => cmd.motion(Motion::SoftHome, f),
+                    //TODO &, *
                     // TODO (if not text object)
                     '(' => if !cmd.text_object(TextObject::Parentheses, f) {},
                     // TODO (if not text object)
                     ')' => if !cmd.text_object(TextObject::Parentheses, f) {},
+                    // Move up and soft home
+                    '-' => {
+                        cmd.motion(Motion::Up, f);
+                        cmd.motion(Motion::SoftHome, f);
+                    }
+                    // Move down and soft home
+                    '+' | ENTER => {
+                        cmd.motion(Motion::Down, f);
+                        cmd.motion(Motion::SoftHome, f);
+                    }
                     // Auto indent
                     '=' => cmd.operator(Operator::AutoIndent, f),
                     // TODO (if not text object)
@@ -720,10 +744,6 @@ impl Parser for ViParser {
                             value: String::new(),
                             forwards: false,
                         };
-                    }
-                    ENTER => {
-                        cmd.motion(Motion::Down, f);
-                        cmd.motion(Motion::SoftHome, f);
                     }
                     ESCAPE => {
                         self.reset();

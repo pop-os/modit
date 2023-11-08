@@ -387,20 +387,8 @@ impl ViCmd {
 pub enum ViMode {
     /// Normal mode
     Normal,
-    /// Waiting for f character
-    LowerF,
-    /// Waiting for F character
-    UpperF,
-    /// Waiting for g command
-    LowerG,
-    /// Waiting for t character
-    LowerT,
-    /// Waiting for T character
-    UpperT,
-    /// Waiting for z command
-    LowerZ,
-    /// Waiting for z command
-    UpperZ,
+    /// Waiting for another character to complete command
+    Extra(char),
     /// Insert mode
     Insert,
     /// Replace mode
@@ -492,15 +480,15 @@ impl Parser for ViParser {
                     'E' => cmd.motion(Motion::NextWordEnd(Word::Upper), f),
                     // Find char forwards
                     'f' => {
-                        self.mode = ViMode::LowerF;
+                        self.mode = ViMode::Extra(c);
                     }
                     // Find char backwords
                     'F' => {
-                        self.mode = ViMode::UpperF;
+                        self.mode = ViMode::Extra(c);
                     }
                     // g commands
                     'g' => {
-                        self.mode = ViMode::LowerG;
+                        self.mode = ViMode::Extra(c);
                     }
                     // Goto line (or end of file)
                     'G' => match cmd.count.take() {
@@ -569,9 +557,11 @@ impl Parser for ViParser {
                         f(Event::Paste);
                     }
                     //TODO: q, Q
-                    //TODO: Replace char
-                    'r' => {}
-                    //TODO: Replace mode
+                    // Replace char
+                    'r' => {
+                        self.mode = ViMode::Extra(c);
+                    }
+                    // Replace mode
                     'R' => {
                         self.mode = ViMode::Replace;
                     }
@@ -587,12 +577,12 @@ impl Parser for ViParser {
                     // Until character forwards (if not text object)
                     't' => {
                         if !cmd.text_object(TextObject::Tag, f) {
-                            self.mode = ViMode::LowerT;
+                            self.mode = ViMode::Extra(c);
                         }
                     }
                     // Until character backwards
                     'T' => {
-                        self.mode = ViMode::UpperT;
+                        self.mode = ViMode::Extra(c);
                     }
                     // Undo
                     'u' => {
@@ -637,15 +627,18 @@ impl Parser for ViParser {
                     'X' => cmd.repeat(|_| f(Event::Backspace)),
                     // Yank
                     'y' => cmd.operator(Operator::Yank, f),
-                    //TODO: Yank line
-                    'Y' => {}
+                    // Yank line
+                    'Y' => {
+                        cmd.operator(Operator::Yank, f);
+                        cmd.motion(Motion::Line, f);
+                    }
                     // z commands
                     'z' => {
-                        self.mode = ViMode::LowerZ;
+                        self.mode = ViMode::Extra(c);
                     }
                     // Z commands
                     'Z' => {
-                        self.mode = ViMode::UpperZ;
+                        self.mode = ViMode::Extra(c);
                     }
                     // Go to start of line
                     '0' => match cmd.count {
@@ -739,79 +732,45 @@ impl Parser for ViParser {
                     _ => {}
                 }
             }
-            ViMode::LowerF => {
-                match c {
-                    BACKSPACE | DELETE | ESCAPE => {}
-                    _ => {
-                        let motion = Motion::NextChar(c);
-                        cmd.motion(motion, f);
-                        self.semicolon_motion = Some(motion);
+            ViMode::Extra(extra) => match extra {
+                'f' | 'F' | 't' | 'T' => {
+                    match c {
+                        BACKSPACE | DELETE | ESCAPE => {}
+                        _ => {
+                            let motion = match extra {
+                                'f' => Motion::NextChar(c),
+                                'F' => Motion::PreviousChar(c),
+                                't' => Motion::NextCharTill(c),
+                                'T' => Motion::PreviousCharTill(c),
+                                _ => unreachable!(),
+                            };
+                            cmd.motion(motion, f);
+                            self.semicolon_motion = Some(motion);
+                        }
                     }
+                    self.reset();
                 }
-                self.reset();
-            }
-            ViMode::UpperF => {
-                match c {
-                    BACKSPACE | DELETE | ESCAPE => {}
-                    _ => {
-                        let motion = Motion::PreviousChar(c);
-                        cmd.motion(motion, f);
-                        self.semicolon_motion = Some(motion);
+                'g' => {
+                    match c {
+                        // Previous word end
+                        'e' => cmd.motion(Motion::PreviousWordEnd(Word::Lower), f),
+                        // Prevous WORD end
+                        'E' => cmd.motion(Motion::PreviousWordEnd(Word::Upper), f),
+                        'g' => match cmd.count.take() {
+                            Some(line) => cmd.motion(Motion::GotoLine(line), f),
+                            None => cmd.motion(Motion::GotoLine(1), f),
+                        },
+                        //TODO: more g commands
+                        _ => {}
                     }
+                    self.reset();
                 }
-                self.reset();
-            }
-            ViMode::LowerG => {
-                match c {
-                    // Previous word end
-                    'e' => cmd.motion(Motion::PreviousWordEnd(Word::Lower), f),
-                    // Prevous WORD end
-                    'E' => cmd.motion(Motion::PreviousWordEnd(Word::Upper), f),
-                    'g' => match cmd.count.take() {
-                        Some(line) => cmd.motion(Motion::GotoLine(line), f),
-                        None => cmd.motion(Motion::GotoLine(1), f),
-                    },
-                    //TODO: more g commands
-                    _ => {}
+                _ => {
+                    //TODO
+                    log::info!("TODO: extra command {:?}{:?}", extra, c);
+                    self.reset();
                 }
-                self.reset();
-            }
-            ViMode::LowerT => {
-                match c {
-                    BACKSPACE | DELETE | ESCAPE => {}
-                    _ => {
-                        let motion = Motion::NextCharTill(c);
-                        cmd.motion(motion, f);
-                        self.semicolon_motion = Some(motion);
-                    }
-                }
-                self.reset();
-            }
-            ViMode::UpperT => {
-                match c {
-                    BACKSPACE | DELETE | ESCAPE => {}
-                    _ => {
-                        let motion = Motion::PreviousCharTill(c);
-                        cmd.motion(motion, f);
-                        self.semicolon_motion = Some(motion);
-                    }
-                }
-                self.reset();
-            }
-            ViMode::LowerZ => {
-                match c {
-                    //TODO: more z commands
-                    _ => {}
-                }
-                self.reset();
-            }
-            ViMode::UpperZ => {
-                match c {
-                    //TODO: more Z commands
-                    _ => {}
-                }
-                self.reset();
-            }
+            },
             ViMode::Insert => match c {
                 BACKSPACE => {
                     f(Event::Backspace);

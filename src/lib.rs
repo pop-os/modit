@@ -202,9 +202,13 @@ pub enum Motion {
     Inside,
     Left,
     Line,
+    NextChar(char),
+    NextCharTill(char),
     NextSearch,
     NextWordEnd(Word),
     NextWordStart(Word),
+    PreviousChar(char),
+    PreviousCharTill(char),
     PreviousSearch,
     PreviousWordEnd(Word),
     PreviousWordStart(Word),
@@ -321,8 +325,16 @@ impl ViNormal {
 pub enum ViMode {
     /// Normal mode
     Normal(ViNormal),
+    /// Waiting for f character
+    LowerF(ViNormal),
+    /// Waiting for F character
+    UpperF(ViNormal),
     /// Waiting for g command
     LowerG(ViNormal),
+    /// Waiting for t character
+    LowerT(ViNormal),
+    /// Waiting for T character
+    UpperT(ViNormal),
     /// Waiting for z command
     LowerZ(ViNormal),
     /// Waiting for z command
@@ -347,12 +359,14 @@ impl ViMode {
 #[derive(Debug)]
 pub struct ViParser {
     pub mode: ViMode,
+    semicolon_motion: Option<Motion>,
 }
 
 impl ViParser {
     pub fn new() -> Self {
         Self {
             mode: ViMode::normal(),
+            semicolon_motion: None,
         }
     }
 }
@@ -413,10 +427,14 @@ impl Parser for ViParser {
                     'e' => normal.motion(Motion::NextWordEnd(Word::Lower), f),
                     // End of WORD
                     'E' => normal.motion(Motion::NextWordEnd(Word::Upper), f),
-                    //TODO: Find char forwards
-                    'f' => {}
-                    //TODO: Find char backwords
-                    'F' => {}
+                    // Find char forwards
+                    'f' => {
+                        self.mode = ViMode::LowerF(*normal);
+                    }
+                    // Find char backwords
+                    'F' => {
+                        self.mode = ViMode::UpperF(*normal);
+                    }
                     // g commands
                     'g' => {
                         self.mode = ViMode::LowerG(*normal);
@@ -503,10 +521,16 @@ impl Parser for ViParser {
                     }
                     //TODO: Substitute line
                     'S' => {}
-                    //TODO: Until character forwards (if not text object)
-                    't' => if !normal.text_object(TextObject::Tag, f) {},
-                    //TODO: Until character backwards
-                    'T' => {}
+                    // Until character forwards (if not text object)
+                    't' => {
+                        if !normal.text_object(TextObject::Tag, f) {
+                            self.mode = ViMode::LowerT(*normal);
+                        }
+                    }
+                    // Until character backwards
+                    'T' => {
+                        self.mode = ViMode::UpperT(*normal);
+                    }
                     // Undo
                     'u' => {
                         f(Event::Undo);
@@ -602,6 +626,12 @@ impl Parser for ViParser {
                     ']' => if !normal.text_object(TextObject::SquareBrackets, f) {},
                     // TODO (if not text object)
                     '}' => if !normal.text_object(TextObject::CurlyBrackets, f) {},
+                    // Repeat f/F/t/T
+                    ';' => {
+                        if let Some(motion) = self.semicolon_motion {
+                            normal.motion(motion, f);
+                        }
+                    }
                     // Enter command mode
                     ':' => {
                         self.mode = ViMode::Command {
@@ -649,7 +679,33 @@ impl Parser for ViParser {
                     _ => {}
                 }
             }
-            ViMode::LowerG(mut normal) => {
+            ViMode::LowerF(ref mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    BACKSPACE | DELETE | ESCAPE => {}
+                    _ => {
+                        let motion = Motion::NextChar(c);
+                        normal.motion(motion, f);
+                        self.semicolon_motion = Some(motion);
+                    }
+                }
+                self.mode = ViMode::Normal(*normal);
+            }
+            ViMode::UpperF(ref mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    BACKSPACE | DELETE | ESCAPE => {}
+                    _ => {
+                        let motion = Motion::PreviousChar(c);
+                        normal.motion(motion, f);
+                        self.semicolon_motion = Some(motion);
+                    }
+                }
+                self.mode = ViMode::Normal(*normal);
+            }
+            ViMode::LowerG(ref mut normal) => {
                 //TODO: is there a better way to store this?
                 normal.selection = selection;
                 match c {
@@ -664,25 +720,51 @@ impl Parser for ViParser {
                     //TODO: more g commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(normal);
+                self.mode = ViMode::Normal(*normal);
             }
-            ViMode::LowerZ(mut normal) => {
+            ViMode::LowerT(ref mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    BACKSPACE | DELETE | ESCAPE => {}
+                    _ => {
+                        let motion = Motion::NextCharTill(c);
+                        normal.motion(motion, f);
+                        self.semicolon_motion = Some(motion);
+                    }
+                }
+                self.mode = ViMode::Normal(*normal);
+            }
+            ViMode::UpperT(ref mut normal) => {
+                //TODO: is there a better way to store this?
+                normal.selection = selection;
+                match c {
+                    BACKSPACE | DELETE | ESCAPE => {}
+                    _ => {
+                        let motion = Motion::PreviousCharTill(c);
+                        normal.motion(motion, f);
+                        self.semicolon_motion = Some(motion);
+                    }
+                }
+                self.mode = ViMode::Normal(*normal);
+            }
+            ViMode::LowerZ(ref mut normal) => {
                 //TODO: is there a better way to store this?
                 normal.selection = selection;
                 match c {
                     //TODO: more z commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(normal);
+                self.mode = ViMode::Normal(*normal);
             }
-            ViMode::UpperZ(mut normal) => {
+            ViMode::UpperZ(ref mut normal) => {
                 //TODO: is there a better way to store this?
                 normal.selection = selection;
                 match c {
                     //TODO: more Z commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(normal);
+                self.mode = ViMode::Normal(*normal);
             }
             ViMode::Insert => match c {
                 ESCAPE => {

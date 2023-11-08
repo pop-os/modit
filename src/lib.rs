@@ -302,7 +302,7 @@ impl ViCmd {
         let motion = self.motion.take().unwrap_or(Motion::Selection);
         let text_object = self.text_object.take();
 
-        f(Event::Operator(count, operator, motion, text_object));
+        f(Event::Cmd(count, operator, motion, text_object));
 
         true
     }
@@ -311,21 +311,21 @@ impl ViCmd {
 #[derive(Debug)]
 pub enum ViMode {
     /// Normal mode
-    Normal(ViCmd),
+    Normal,
     /// Waiting for f character
-    LowerF(ViCmd),
+    LowerF,
     /// Waiting for F character
-    UpperF(ViCmd),
+    UpperF,
     /// Waiting for g command
-    LowerG(ViCmd),
+    LowerG,
     /// Waiting for t character
-    LowerT(ViCmd),
+    LowerT,
     /// Waiting for T character
-    UpperT(ViCmd),
+    UpperT,
     /// Waiting for z command
-    LowerZ(ViCmd),
+    LowerZ,
     /// Waiting for z command
-    UpperZ(ViCmd),
+    UpperZ,
     /// Insert mode
     Insert,
     /// Replace mode
@@ -336,23 +336,18 @@ pub enum ViMode {
     Search { value: String, forwards: bool },
 }
 
-impl ViMode {
-    // Default normal state
-    pub fn normal() -> Self {
-        Self::Normal(ViCmd::default())
-    }
-}
-
 #[derive(Debug)]
 pub struct ViParser {
     pub mode: ViMode,
-    semicolon_motion: Option<Motion>,
+    pub cmd: ViCmd,
+    pub semicolon_motion: Option<Motion>,
 }
 
 impl ViParser {
     pub fn new() -> Self {
         Self {
-            mode: ViMode::normal(),
+            mode: ViMode::Normal,
+            cmd: ViCmd::default(),
             semicolon_motion: None,
         }
     }
@@ -360,16 +355,18 @@ impl ViParser {
 
 impl Parser for ViParser {
     fn reset(&mut self) {
-        self.mode = ViMode::normal();
+        self.mode = ViMode::Normal;
+        self.cmd = ViCmd::default();
     }
 
     fn parse<F: FnMut(Event)>(&mut self, c: char, selection: bool, mut f: F) {
         // Makes managing callbacks easier
         let f = &mut f;
+        //TODO: is there a better way to store this?
+        let mut cmd = &mut self.cmd;
+        cmd.selection = selection;
         match self.mode {
-            ViMode::Normal(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::Normal => {
                 match c {
                     // Enter insert mode after cursor (if not awaiting text object)
                     'a' => {
@@ -416,15 +413,15 @@ impl Parser for ViParser {
                     'E' => cmd.motion(Motion::NextWordEnd(Word::Upper), f),
                     // Find char forwards
                     'f' => {
-                        self.mode = ViMode::LowerF(*cmd);
+                        self.mode = ViMode::LowerF;
                     }
                     // Find char backwords
                     'F' => {
-                        self.mode = ViMode::UpperF(*cmd);
+                        self.mode = ViMode::UpperF;
                     }
                     // g commands
                     'g' => {
-                        self.mode = ViMode::LowerG(*cmd);
+                        self.mode = ViMode::LowerG;
                     }
                     // Goto line (or end of file)
                     'G' => match cmd.count.take() {
@@ -511,12 +508,12 @@ impl Parser for ViParser {
                     // Until character forwards (if not text object)
                     't' => {
                         if !cmd.text_object(TextObject::Tag, f) {
-                            self.mode = ViMode::LowerT(*cmd);
+                            self.mode = ViMode::LowerT;
                         }
                     }
                     // Until character backwards
                     'T' => {
-                        self.mode = ViMode::UpperT(*cmd);
+                        self.mode = ViMode::UpperT;
                     }
                     // Undo
                     'u' => {
@@ -568,11 +565,11 @@ impl Parser for ViParser {
                     'Y' => {}
                     // z commands
                     'z' => {
-                        self.mode = ViMode::LowerZ(*cmd);
+                        self.mode = ViMode::LowerZ;
                     }
                     // Z commands
                     'Z' => {
-                        self.mode = ViMode::UpperZ(*cmd);
+                        self.mode = ViMode::UpperZ;
                     }
                     // Go to start of line
                     '0' => match cmd.count {
@@ -666,9 +663,7 @@ impl Parser for ViParser {
                     _ => {}
                 }
             }
-            ViMode::LowerF(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::LowerF => {
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
@@ -677,11 +672,9 @@ impl Parser for ViParser {
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
-            ViMode::UpperF(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::UpperF => {
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
@@ -690,11 +683,9 @@ impl Parser for ViParser {
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
-            ViMode::LowerG(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::LowerG => {
                 match c {
                     // Previous word end
                     'e' => cmd.motion(Motion::PreviousWordEnd(Word::Lower), f),
@@ -707,11 +698,9 @@ impl Parser for ViParser {
                     //TODO: more g commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
-            ViMode::LowerT(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::LowerT => {
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
@@ -720,11 +709,9 @@ impl Parser for ViParser {
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
-            ViMode::UpperT(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::UpperT => {
                 match c {
                     BACKSPACE | DELETE | ESCAPE => {}
                     _ => {
@@ -733,25 +720,21 @@ impl Parser for ViParser {
                         self.semicolon_motion = Some(motion);
                     }
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
-            ViMode::LowerZ(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::LowerZ => {
                 match c {
                     //TODO: more z commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
-            ViMode::UpperZ(ref mut cmd) => {
-                //TODO: is there a better way to store this?
-                cmd.selection = selection;
+            ViMode::UpperZ => {
                 match c {
                     //TODO: more Z commands
                     _ => {}
                 }
-                self.mode = ViMode::Normal(*cmd);
+                self.reset();
             }
             ViMode::Insert => match c {
                 BACKSPACE => {
@@ -762,7 +745,7 @@ impl Parser for ViParser {
                 }
                 ESCAPE => {
                     ViCmd::default().motion(Motion::Left, f);
-                    self.mode = ViMode::normal();
+                    self.reset();
                 }
                 _ => f(Event::Insert(c)),
             },
@@ -775,7 +758,7 @@ impl Parser for ViParser {
                 }
                 ESCAPE => {
                     ViCmd::default().motion(Motion::Left, f);
-                    self.mode = ViMode::normal();
+                    self.reset();
                 }
                 _ => {
                     f(Event::Delete);
@@ -784,15 +767,15 @@ impl Parser for ViParser {
             },
             ViMode::Command { ref mut value } => match c {
                 ESCAPE => {
-                    self.mode = ViMode::normal();
+                    self.reset();
                 }
                 ENTER => {
                     //TODO: run command
-                    self.mode = ViMode::normal();
+                    self.reset();
                 }
                 BACKSPACE => {
                     if value.pop().is_none() {
-                        self.mode = ViMode::normal();
+                        self.reset();
                     }
                 }
                 _ => {
@@ -804,15 +787,15 @@ impl Parser for ViParser {
                 forwards,
             } => match c {
                 ESCAPE => {
-                    self.mode = ViMode::normal();
+                    self.reset();
                 }
                 ENTER => {
                     //TODO: run search
-                    self.mode = ViMode::normal();
+                    self.reset();
                 }
                 BACKSPACE => {
                     if value.pop().is_none() {
-                        self.mode = ViMode::normal();
+                        self.reset();
                     }
                 }
                 _ => {

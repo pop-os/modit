@@ -48,24 +48,40 @@ pub const TAB: char = '\t';
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
-    /// Notify of a mode change requiring redraw
-    Redraw,
+    /// Automatically indent
+    AutoIndent,
+    /// Delete text behind cursor
+    Backspace,
+    /// Copy to clipboard (TODO: multiple clipboards?)
+    Copy,
+    /// Delete text in front of cursor
+    Delete,
     /// Escape key
     Escape,
     /// Insert character at cursor
     Insert(char),
+    /// Move cursor
+    Motion(Motion, usize),
     /// Create new line
     NewLine,
-    /// Delete text behind cursor
-    Backspace,
-    /// Delete text in front of cursor
-    Delete,
     /// Paste from clipboard (TODO: multiple clipboards?)
     Paste,
+    /// Notify of a mode change requiring redraw
+    Redraw,
+    /// Clear selection
+    SelectClear,
+    /// Start selection
+    SelectStart,
+    /// Select text object
+    SelectTextObject(TextObject, bool),
+    /// Shift text to the left
+    ShiftLeft,
+    /// Shift text to the right
+    ShiftRight,
+    /// Swap case
+    SwapCase,
     /// Undo last action
     Undo,
-    /// A fully composed command
-    Cmd(usize, Operator, Motion, Option<TextObject>),
 }
 
 pub trait Parser {
@@ -78,7 +94,6 @@ pub enum Operator {
     AutoIndent,
     Change,
     Delete,
-    Move,
     ShiftLeft,
     ShiftRight,
     SwapCase,
@@ -298,17 +313,77 @@ impl ViCmd {
         }
 
         let count = self.count.take().unwrap_or(1);
-        let operator = self.operator.take().unwrap_or(Operator::Move);
         let motion = self.motion.take().unwrap_or(Motion::Selection);
         let text_object = self.text_object.take();
 
-        f(Event::Cmd(count, operator, motion, text_object));
+        //TODO: clean up logic of Motion, such that actual motions and references to
+        // text objects and selections are not in the same enum
+        match self.operator.take() {
+            Some(operator) => {
+                match motion {
+                    Motion::Around => f(Event::SelectTextObject(
+                        text_object.expect("no text object"),
+                        true,
+                    )),
+                    Motion::Inside => f(Event::SelectTextObject(
+                        text_object.expect("no text object"),
+                        false,
+                    )),
+                    Motion::Line => {
+                        f(Event::Motion(Motion::SoftHome, 1));
+                        f(Event::SelectStart);
+                        f(Event::Motion(Motion::End, 1));
+                    }
+                    Motion::Selection => {}
+                    _ => {
+                        f(Event::SelectStart);
+                        f(Event::Motion(motion, count));
+                    }
+                }
+
+                match operator {
+                    Operator::AutoIndent => {
+                        f(Event::AutoIndent);
+                    }
+                    Operator::Change => {
+                        f(Event::Delete);
+                        //TODO: enter insert mode
+                    }
+                    Operator::Delete => {
+                        f(Event::Delete);
+                    }
+                    Operator::ShiftLeft => {
+                        f(Event::ShiftLeft);
+                    }
+                    Operator::ShiftRight => {
+                        f(Event::ShiftRight);
+                    }
+                    Operator::SwapCase => {
+                        f(Event::SwapCase);
+                    }
+                    Operator::Yank => {
+                        f(Event::Copy);
+                    }
+                }
+            }
+            None => match motion {
+                Motion::Around => f(Event::SelectTextObject(
+                    text_object.expect("no text object"),
+                    true,
+                )),
+                Motion::Inside => f(Event::SelectTextObject(
+                    text_object.expect("no text object"),
+                    false,
+                )),
+                _ => f(Event::Motion(motion, count)),
+            },
+        }
 
         true
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ViMode {
     /// Normal mode
     Normal,
@@ -330,6 +405,10 @@ pub enum ViMode {
     Insert,
     /// Replace mode
     Replace,
+    /// Visual mode
+    Visual,
+    /// Visual line mode
+    VisualLine,
     /// Command mode
     Command { value: String },
     /// Search mode
@@ -366,11 +445,11 @@ impl Parser for ViParser {
         let mut cmd = &mut self.cmd;
         cmd.selection = selection;
         match self.mode {
-            ViMode::Normal => {
+            ViMode::Normal | ViMode::Visual | ViMode::VisualLine => {
                 match c {
                     // Enter insert mode after cursor (if not awaiting text object)
                     'a' => {
-                        if cmd.operator.is_some() {
+                        if cmd.operator.is_some() || self.mode != ViMode::Normal {
                             cmd.motion(Motion::Around, f);
                         } else {
                             ViCmd::default().motion(Motion::Right, f);
@@ -434,7 +513,7 @@ impl Parser for ViParser {
                     'H' => cmd.motion(Motion::ScreenHigh, f),
                     // Enter insert mode at cursor (if not awaiting text object)
                     'i' => {
-                        if cmd.operator.is_some() {
+                        if cmd.operator.is_some() || self.mode != ViMode::Normal {
                             cmd.motion(Motion::Inside, f);
                         } else {
                             self.mode = ViMode::Insert;
@@ -522,26 +601,23 @@ impl Parser for ViParser {
                     //TODO: U
                     // Enter visual mode
                     'v' => {
-                        /*TODO
-                        if self.editor.select_opt().is_some() {
-                            self.editor.set_select_opt(None);
+                        if self.mode == ViMode::Visual {
+                            self.mode = ViMode::Normal;
                         } else {
-                            self.editor.set_select_opt(Some(self.editor.cursor()));
+                            //TODO: this is very hacky and has bugs
+                            f(Event::SelectStart);
+                            self.mode = ViMode::Visual;
                         }
-                        */
                     }
                     // Enter line visual mode
                     'V' => {
-                        /*TODO
-                        if self.editor.select_opt().is_some() {
-                            self.editor.set_select_opt(None);
+                        if self.mode == ViMode::VisualLine {
+                            self.mode = ViMode::Normal;
                         } else {
-                            f(Event::Home);
-                            self.editor.set_select_opt(Some(self.editor.cursor()));
-                            //TODO: set cursor_x_opt to max
-                            f(Event::End);
+                            //TODO: select by line
+                            f(Event::SelectStart);
+                            self.mode = ViMode::VisualLine;
                         }
-                        */
                     }
                     // Next word (if not text object)
                     'w' => {
@@ -657,7 +733,7 @@ impl Parser for ViParser {
                         cmd.motion(Motion::SoftHome, f);
                     }
                     ESCAPE => {
-                        *cmd = ViCmd::default();
+                        self.reset();
                         f(Event::Escape);
                     }
                     _ => {}

@@ -39,6 +39,7 @@
 extern crate alloc;
 
 use alloc::string::String;
+use core::fmt;
 
 pub const BACKSPACE: char = '\x08';
 pub const DELETE: char = '\x7F';
@@ -257,6 +258,24 @@ pub struct ViCmd {
     text_object: Option<TextObject>,
     selection: bool,
     enter_insert_mode: bool,
+}
+
+impl fmt::Display for ViCmd {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(count) = self.count {
+            write!(f, "{count}")?;
+        }
+        if let Some(operator) = self.operator {
+            write!(f, "{operator:?}")?;
+        }
+        if let Some(motion) = self.motion {
+            write!(f, "{motion:?}")?;
+        }
+        if let Some(text_object) = self.text_object {
+            write!(f, "{text_object:?}")?;
+        }
+        Ok(())
+    }
 }
 
 impl ViCmd {

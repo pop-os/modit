@@ -256,6 +256,7 @@ pub struct ViCmd {
     motion: Option<Motion>,
     text_object: Option<TextObject>,
     selection: bool,
+    enter_insert_mode: bool,
 }
 
 impl ViCmd {
@@ -347,7 +348,7 @@ impl ViCmd {
                     }
                     Operator::Change => {
                         f(Event::Delete);
-                        //TODO: enter insert mode
+                        self.enter_insert_mode = true;
                     }
                     Operator::Delete => {
                         f(Event::Delete);
@@ -858,6 +859,13 @@ impl Parser for ViParser {
                 }
             },
         }
+
+        // Enter insert mode, for example, after Change operator
+        if self.cmd.enter_insert_mode {
+            self.cmd.enter_insert_mode = false;
+            self.mode = ViMode::Insert;
+        }
+
         //TODO: optimize redraw
         f(Event::Redraw);
     }

@@ -187,8 +187,6 @@ pub struct ViParser {
     pub mode: ViMode,
     pub cmd: ViCmd,
     pub semicolon_motion: Option<Motion>,
-    pub search_value: String,
-    pub search_forwards: bool,
 }
 
 impl ViParser {
@@ -197,8 +195,6 @@ impl ViParser {
             mode: ViMode::Normal,
             cmd: ViCmd::default(),
             semicolon_motion: None,
-            search_value: String::new(),
-            search_forwards: true,
         }
     }
 }

@@ -14,6 +14,10 @@ pub struct ViContext<F: FnMut(Event)> {
 
 impl<F: FnMut(Event)> ViContext<F> {
     fn start_change(&mut self) {
+        if self.pending_change.is_some() {
+            //TODO: what to do in this case?
+            log::warn!("pending change already started");
+        }
         self.pending_change = Some(Vec::new());
     }
 
@@ -282,12 +286,14 @@ impl Parser for ViParser {
                         if cmd.operator.is_some() || self.mode != ViMode::Normal {
                             cmd.motion(Motion::Around, ctx);
                         } else {
+                            ctx.start_change();
                             ViCmd::default().motion(Motion::Right, ctx);
                             self.mode = ViMode::Insert;
                         }
                     }
                     // Enter insert mode at end of line
                     'A' => {
+                        ctx.start_change();
                         ViCmd::default().motion(Motion::End, ctx);
                         self.mode = ViMode::Insert;
                     }
@@ -352,11 +358,13 @@ impl Parser for ViParser {
                         if cmd.operator.is_some() || self.mode != ViMode::Normal {
                             cmd.motion(Motion::Inside, ctx);
                         } else {
+                            ctx.start_change();
                             self.mode = ViMode::Insert;
                         }
                     }
                     // Enter insert mode at start of line
                     'I' => {
+                        ctx.start_change();
                         ViCmd::default().motion(Motion::SoftHome, ctx);
                         self.mode = ViMode::Insert;
                     }
@@ -382,12 +390,14 @@ impl Parser for ViParser {
                     'N' => cmd.motion(Motion::PreviousSearch, ctx),
                     // Create line after and enter insert mode
                     'o' => {
+                        ctx.start_change();
                         ViCmd::default().motion(Motion::End, ctx);
                         ctx.e(Event::NewLine);
                         self.mode = ViMode::Insert;
                     }
                     // Create line before and enter insert mode
                     'O' => {
+                        ctx.start_change();
                         ViCmd::default().motion(Motion::Home, ctx);
                         ctx.e(Event::NewLine);
                         ViCmd::default().motion(Motion::Up, ctx);
@@ -411,11 +421,13 @@ impl Parser for ViParser {
                     }
                     // Replace mode
                     'R' => {
+                        ctx.start_change();
                         self.mode = ViMode::Replace;
                     }
                     // Substitute char (if not text object)
                     's' => {
                         if !cmd.text_object(TextObject::Sentence, ctx) {
+                            ctx.start_change();
                             cmd.repeat(|_| ctx.e(Event::Delete));
                             self.mode = ViMode::Insert;
                         }

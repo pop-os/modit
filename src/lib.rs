@@ -41,12 +41,6 @@ extern crate alloc;
 use alloc::string::String;
 use core::fmt;
 
-pub const BACKSPACE: char = '\x08';
-pub const DELETE: char = '\x7F';
-pub const ESCAPE: char = '\x1B';
-pub const ENTER: char = '\n';
-pub const TAB: char = '\t';
-
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     /// Automatically indent
@@ -62,7 +56,7 @@ pub enum Event {
     /// Insert character at cursor
     Insert(char),
     /// Move cursor
-    Motion(Motion, usize),
+    Motion(Motion),
     /// Create new line
     NewLine,
     /// Paste from clipboard (TODO: multiple clipboards?)
@@ -85,9 +79,41 @@ pub enum Event {
     Undo,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Key {
+    //TODO: Home, End, Page Up, Page Down, etc.
+    Backspace,
+    Char(char),
+    Delete,
+    Down,
+    Enter,
+    Escape,
+    Left,
+    Right,
+    Tab,
+    Up,
+}
+
+impl Key {
+    /// Normalize so that Char('\n') is converted to Enter, for example
+    pub fn normalize(self) -> Self {
+        match self {
+            Key::Char(c) => match c {
+                '\x08' => Key::Backspace,
+                '\x7F' => Key::Delete,
+                '\n' | '\r' => Key::Enter,
+                '\x1B' => Key::Escape,
+                '\t' => Key::Tab,
+                _ => Key::Char(c),
+            },
+            key => key,
+        }
+    }
+}
+
 pub trait Parser {
     fn reset(&mut self);
-    fn parse<F: FnMut(Event)>(&mut self, c: char, selection: bool, f: F);
+    fn parse<F: FnMut(Event)>(&mut self, key: Key, selection: bool, f: F);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -350,14 +376,16 @@ impl ViCmd {
                         false,
                     )),
                     Motion::Line => {
-                        f(Event::Motion(Motion::SoftHome, 1));
+                        f(Event::Motion(Motion::SoftHome));
                         f(Event::SelectStart);
-                        f(Event::Motion(Motion::End, 1));
+                        f(Event::Motion(Motion::End));
                     }
                     Motion::Selection => {}
                     _ => {
                         f(Event::SelectStart);
-                        f(Event::Motion(motion, count));
+                        for _ in 0..count {
+                            f(Event::Motion(motion));
+                        }
                     }
                 }
 
@@ -395,7 +423,11 @@ impl ViCmd {
                     text_object.expect("no text object"),
                     false,
                 )),
-                _ => f(Event::Motion(motion, count)),
+                _ => {
+                    for _ in 0..count {
+                        f(Event::Motion(motion));
+                    }
+                }
             },
         }
 
@@ -446,15 +478,34 @@ impl Parser for ViParser {
         self.cmd = ViCmd::default();
     }
 
-    fn parse<F: FnMut(Event)>(&mut self, c: char, selection: bool, mut f: F) {
+    fn parse<F: FnMut(Event)>(&mut self, key: Key, selection: bool, mut f: F) {
+        // Normalize key, so we don't deal with control characters below
+        let key = key.normalize();
+        //TODO: is there a better way to store this?
+        self.cmd.selection = selection;
         // Makes managing callbacks easier
         let f = &mut f;
-        //TODO: is there a better way to store this?
+        // Makes composint commands easier
         let mut cmd = &mut self.cmd;
-        cmd.selection = selection;
         match self.mode {
-            ViMode::Normal | ViMode::Visual | ViMode::VisualLine => {
-                match c {
+            ViMode::Normal | ViMode::Visual | ViMode::VisualLine => match key {
+                Key::Backspace => cmd.motion(Motion::Left, f),
+                Key::Delete => cmd.repeat(|_| f(Event::Delete)),
+                Key::Down => cmd.motion(Motion::Down, f),
+                Key::Enter => {
+                    cmd.motion(Motion::Down, f);
+                    cmd.motion(Motion::SoftHome, f);
+                }
+                Key::Escape => {
+                    self.reset();
+                    f(Event::Escape);
+                }
+                Key::Left => cmd.motion(Motion::Left, f),
+                Key::Right => cmd.motion(Motion::Right, f),
+                //TODO: what should tab do?
+                Key::Tab => (),
+                Key::Up => cmd.motion(Motion::Up, f),
+                Key::Char(c) => match c {
                     // Enter insert mode after cursor (if not awaiting text object)
                     'a' => {
                         if cmd.operator.is_some() || self.mode != ViMode::Normal {
@@ -522,7 +573,7 @@ impl Parser for ViParser {
                         None => cmd.motion(Motion::GotoEof, f),
                     },
                     // Left
-                    'h' | BACKSPACE => cmd.motion(Motion::Left, f),
+                    'h' => cmd.motion(Motion::Left, f),
                     // Top of screen
                     'H' => cmd.motion(Motion::ScreenHigh, f),
                     // Enter insert mode at cursor (if not awaiting text object)
@@ -653,7 +704,7 @@ impl Parser for ViParser {
                         }
                     }
                     // Remove character at cursor
-                    'x' | DELETE => cmd.repeat(|_| f(Event::Delete)),
+                    'x' => cmd.repeat(|_| f(Event::Delete)),
                     // Remove character before cursor
                     'X' => cmd.repeat(|_| f(Event::Backspace)),
                     // Yank
@@ -709,7 +760,7 @@ impl Parser for ViParser {
                         cmd.motion(Motion::SoftHome, f);
                     }
                     // Move down and soft home
-                    '+' | ENTER => {
+                    '+' => {
                         cmd.motion(Motion::Down, f);
                         cmd.motion(Motion::SoftHome, f);
                     }
@@ -765,18 +816,13 @@ impl Parser for ViParser {
                             forwards: false,
                         };
                     }
-                    ESCAPE => {
-                        self.reset();
-                        f(Event::Escape);
-                    }
                     _ => {}
-                }
-            }
+                },
+            },
             ViMode::Extra(extra) => match extra {
                 'f' | 'F' | 't' | 'T' => {
-                    match c {
-                        BACKSPACE | DELETE | ESCAPE => {}
-                        _ => {
+                    match key {
+                        Key::Char(c) => {
                             let motion = match extra {
                                 'f' => Motion::NextChar(c),
                                 'F' => Motion::PreviousChar(c),
@@ -787,94 +833,103 @@ impl Parser for ViParser {
                             cmd.motion(motion, f);
                             self.semicolon_motion = Some(motion);
                         }
+                        _ => {}
                     }
                     self.reset();
                 }
                 'g' => {
-                    match c {
-                        // Previous word end
-                        'e' => cmd.motion(Motion::PreviousWordEnd(Word::Lower), f),
-                        // Prevous WORD end
-                        'E' => cmd.motion(Motion::PreviousWordEnd(Word::Upper), f),
-                        'g' => match cmd.count.take() {
-                            Some(line) => cmd.motion(Motion::GotoLine(line), f),
-                            None => cmd.motion(Motion::GotoLine(1), f),
+                    match key {
+                        Key::Char(c) => match c {
+                            // Previous word end
+                            'e' => cmd.motion(Motion::PreviousWordEnd(Word::Lower), f),
+                            // Prevous WORD end
+                            'E' => cmd.motion(Motion::PreviousWordEnd(Word::Upper), f),
+                            'g' => match cmd.count.take() {
+                                Some(line) => cmd.motion(Motion::GotoLine(line), f),
+                                None => cmd.motion(Motion::GotoLine(1), f),
+                            },
+                            //TODO: more g commands
+                            _ => {}
                         },
-                        //TODO: more g commands
+                        //TODO: what do control keys do in this mode?
                         _ => {}
                     }
                     self.reset();
                 }
                 _ => {
                     //TODO
-                    log::info!("TODO: extra command {:?}{:?}", extra, c);
+                    log::info!("TODO: extra command {:?}{:?}", extra, key);
                     self.reset();
                 }
             },
-            ViMode::Insert => match c {
-                BACKSPACE => {
-                    f(Event::Backspace);
-                }
-                DELETE => {
-                    f(Event::Delete);
-                }
-                ESCAPE => {
+            ViMode::Insert => match key {
+                Key::Backspace => f(Event::Backspace),
+                Key::Delete => f(Event::Delete),
+                Key::Escape => {
                     ViCmd::default().motion(Motion::Left, f);
                     self.reset();
                 }
-                _ => f(Event::Insert(c)),
-            },
-            ViMode::Replace => match c {
-                BACKSPACE => {
-                    f(Event::Backspace);
-                }
-                DELETE => {
-                    f(Event::Delete);
-                }
-                ESCAPE => {
-                    ViCmd::default().motion(Motion::Left, f);
-                    self.reset();
-                }
+                Key::Char(c) => f(Event::Insert(c)),
                 _ => {
+                    //TODO: more keys
+                }
+            },
+            ViMode::Replace => match key {
+                Key::Backspace => f(Event::Backspace),
+                Key::Delete => f(Event::Delete),
+                Key::Escape => {
+                    ViCmd::default().motion(Motion::Left, f);
+                    self.reset();
+                }
+                Key::Char(c) => {
                     f(Event::Delete);
                     f(Event::Insert(c));
                 }
+                _ => {
+                    //TODO: more keys
+                }
             },
-            ViMode::Command { ref mut value } => match c {
-                ESCAPE => {
+            ViMode::Command { ref mut value } => match key {
+                Key::Escape => {
                     self.reset();
                 }
-                ENTER => {
+                Key::Enter => {
                     //TODO: run command
                     self.reset();
                 }
-                BACKSPACE => {
+                Key::Backspace => {
                     if value.pop().is_none() {
                         self.reset();
                     }
                 }
-                _ => {
+                Key::Char(c) => {
                     value.push(c);
+                }
+                _ => {
+                    //TODO: more keys
                 }
             },
             ViMode::Search {
                 ref mut value,
                 forwards,
-            } => match c {
-                ESCAPE => {
+            } => match key {
+                Key::Escape => {
                     self.reset();
                 }
-                ENTER => {
+                Key::Enter => {
                     //TODO: run search
                     self.reset();
                 }
-                BACKSPACE => {
+                Key::Backspace => {
                     if value.pop().is_none() {
                         self.reset();
                     }
                 }
-                _ => {
+                Key::Char(c) => {
                     value.push(c);
+                }
+                _ => {
+                    //TODO: more keys
                 }
             },
         }

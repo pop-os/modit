@@ -265,8 +265,11 @@ impl Parser for ViParser {
         match self.mode {
             ViMode::Normal | ViMode::Visual | ViMode::VisualLine => match key {
                 Key::Backspace => cmd.motion(Motion::Left, ctx),
+                //TODO: what should backtab do?
+                Key::Backtab => (),
                 Key::Delete => cmd.repeat(|_| ctx.e(Event::Delete)),
                 Key::Down => cmd.motion(Motion::Down, ctx),
+                Key::End => cmd.motion(Motion::End, ctx),
                 Key::Enter => {
                     cmd.motion(Motion::Down, ctx);
                     cmd.motion(Motion::SoftHome, ctx);
@@ -275,7 +278,10 @@ impl Parser for ViParser {
                     self.reset();
                     ctx.e(Event::Escape);
                 }
+                Key::Home => cmd.motion(Motion::Home, ctx),
                 Key::Left => cmd.motion(Motion::Left, ctx),
+                Key::PageDown => cmd.motion(Motion::PageDown, ctx),
+                Key::PageUp => cmd.motion(Motion::PageUp, ctx),
                 Key::Right => cmd.motion(Motion::Right, ctx),
                 //TODO: what should tab do?
                 Key::Tab => (),

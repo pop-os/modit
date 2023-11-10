@@ -85,15 +85,19 @@ pub enum Event {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Key {
-    //TODO: Ctrl keys
-    //TODO: Home, End, Page Up, Page Down, etc.
+    //TODO: Ctrl keys?
     Backspace,
+    Backtab,
     Char(char),
     Delete,
     Down,
+    End,
     Enter,
     Escape,
+    Home,
     Left,
+    PageDown,
+    PageUp,
     Right,
     Tab,
     Up,
@@ -241,6 +245,8 @@ pub enum Motion {
     NextSearch,
     NextWordEnd(Word),
     NextWordStart(Word),
+    PageDown,
+    PageUp,
     PreviousChar(char),
     PreviousCharTill(char),
     PreviousSearch,
@@ -273,6 +279,8 @@ impl Motion {
             Self::NextSearch => Some(Self::PreviousSearch),
             Self::NextWordEnd(word) => Some(Self::PreviousWordEnd(word)),
             Self::NextWordStart(word) => Some(Self::PreviousWordStart(word)),
+            Self::PageDown => Some(Self::PageUp),
+            Self::PageUp => Some(Self::PageDown),
             Self::PreviousChar(c) => Some(Self::NextChar(c)),
             Self::PreviousCharTill(c) => Some(Self::NextCharTill(c)),
             Self::PreviousSearch => Some(Self::NextSearch),

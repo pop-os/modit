@@ -118,7 +118,7 @@ impl Key {
 
 pub trait Parser {
     fn reset(&mut self);
-    fn parse<F: FnMut(Event)>(&mut self, key: Key, selection: bool, f: F);
+    fn parse<F: FnMut(Event)>(&mut self, key: Key, selection: bool, callback: F);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -85,6 +85,7 @@ pub enum Event {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Key {
+    //TODO: Ctrl keys
     //TODO: Home, End, Page Up, Page Down, etc.
     Backspace,
     Char(char),
@@ -255,6 +256,38 @@ pub enum Motion {
 }
 
 impl Motion {
+    // Reverse a motion (if possible)
+    pub fn reverse(self) -> Option<Self> {
+        match self {
+            Self::Around => None,
+            Self::Down => Some(Self::Up),
+            Self::End => Some(Self::Home),
+            Self::GotoEof => None,
+            Self::GotoLine(_line) => None,
+            Self::Home => Some(Self::End),
+            Self::Inside => None,
+            Self::Left => Some(Self::Right),
+            Self::Line => None,
+            Self::NextChar(c) => Some(Self::PreviousChar(c)),
+            Self::NextCharTill(c) => Some(Self::PreviousCharTill(c)),
+            Self::NextSearch => Some(Self::PreviousSearch),
+            Self::NextWordEnd(word) => Some(Self::PreviousWordEnd(word)),
+            Self::NextWordStart(word) => Some(Self::PreviousWordStart(word)),
+            Self::PreviousChar(c) => Some(Self::NextChar(c)),
+            Self::PreviousCharTill(c) => Some(Self::NextCharTill(c)),
+            Self::PreviousSearch => Some(Self::NextSearch),
+            Self::PreviousWordEnd(word) => Some(Self::NextWordEnd(word)),
+            Self::PreviousWordStart(word) => Some(Self::NextWordStart(word)),
+            Self::Right => Some(Self::Left),
+            Self::ScreenHigh => None,
+            Self::ScreenLow => None,
+            Self::ScreenMiddle => None,
+            Self::Selection => None,
+            Self::SoftHome => Some(Self::End),
+            Self::Up => Some(Self::Down),
+        }
+    }
+
     /// Returns true if text object is needed
     pub fn text_object(&self) -> bool {
         match self {

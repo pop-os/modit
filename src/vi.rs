@@ -513,10 +513,18 @@ impl Parser for ViParser {
                             value: String::new(),
                         };
                     }
-                    //TODO: ';'
                     //TODO (if not text object)
                     '\'' => if !cmd.text_object(TextObject::SingleQuotes, f) {},
+                    //TODO (if not text object)
                     '"' => if !cmd.text_object(TextObject::DoubleQuotes, f) {},
+                    // Reverse f/F/t/T
+                    ',' => {
+                        if let Some(motion) = self.semicolon_motion {
+                            if let Some(reverse) = motion.reverse() {
+                                cmd.motion(reverse, f);
+                            }
+                        }
+                    }
                     // Unindent (if not text object)
                     '<' => {
                         if !cmd.text_object(TextObject::AngleBrackets, f) {

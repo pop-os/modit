@@ -279,10 +279,10 @@ impl Parser for ViParser {
                     ctx.e(Event::Escape);
                 }
                 Key::Home => cmd.motion(Motion::Home, ctx),
-                Key::Left => cmd.motion(Motion::Left, ctx),
+                Key::Left => cmd.motion(Motion::LeftInLine, ctx),
                 Key::PageDown => cmd.motion(Motion::PageDown, ctx),
                 Key::PageUp => cmd.motion(Motion::PageUp, ctx),
-                Key::Right => cmd.motion(Motion::Right, ctx),
+                Key::Right => cmd.motion(Motion::RightInLine, ctx),
                 //TODO: what should tab do?
                 Key::Tab => (),
                 Key::Up => cmd.motion(Motion::Up, ctx),
@@ -355,8 +355,8 @@ impl Parser for ViParser {
                         Some(line) => cmd.motion(Motion::GotoLine(line), ctx),
                         None => cmd.motion(Motion::GotoEof, ctx),
                     },
-                    // Left
-                    'h' => cmd.motion(Motion::Left, ctx),
+                    // Left (in line)
+                    'h' => cmd.motion(Motion::LeftInLine, ctx),
                     // Top of screen
                     'H' => cmd.motion(Motion::ScreenHigh, ctx),
                     // Enter insert mode at cursor (if not awaiting text object)
@@ -382,8 +382,8 @@ impl Parser for ViParser {
                     'k' => cmd.motion(Motion::Up, ctx),
                     //TODO: Look up keyword (vim looks up word under cursor in man pages)
                     'K' => {}
-                    // Right
-                    'l' | ' ' => cmd.motion(Motion::Right, ctx),
+                    // Right (in line)
+                    'l' => cmd.motion(Motion::RightInLine, ctx),
                     // Bottom of screen
                     'L' => cmd.motion(Motion::ScreenLow, ctx),
                     //TODO: Set mark
@@ -621,6 +621,8 @@ impl Parser for ViParser {
                             forwards: false,
                         };
                     }
+                    // Right
+                    ' ' => cmd.motion(Motion::Right, ctx),
                     _ => {}
                 },
             },
@@ -678,7 +680,7 @@ impl Parser for ViParser {
                 Key::Delete => ctx.e(Event::Delete),
                 Key::Enter => ctx.e(Event::NewLine),
                 Key::Escape => {
-                    ViCmd::default().motion(Motion::Left, ctx);
+                    ViCmd::default().motion(Motion::LeftInLine, ctx);
                     ctx.finish_change();
                     self.reset();
                 }

@@ -667,30 +667,20 @@ impl Parser for ViParser {
                     self.reset();
                 }
             },
-            ViMode::Insert => match key {
+            ViMode::Insert | ViMode::Replace => match key {
                 Key::Backspace => ctx.e(Event::Backspace),
-                Key::Delete => ctx.e(Event::Delete),
-                Key::Escape => {
-                    ViCmd::default().motion(Motion::Left, ctx);
-                    ctx.finish_change();
-                    self.reset();
-                }
-                Key::Char(c) => ctx.e(Event::Insert(c)),
-                _ => {
-                    //TODO: more keys
-                }
-            },
-            ViMode::Replace => match key {
-                Key::Backspace => ctx.e(Event::Backspace),
-                Key::Delete => ctx.e(Event::Delete),
-                Key::Escape => {
-                    ViCmd::default().motion(Motion::Left, ctx);
-                    ctx.finish_change();
-                    self.reset();
-                }
                 Key::Char(c) => {
-                    ctx.e(Event::Delete);
+                    if self.mode == ViMode::Replace {
+                        ctx.e(Event::Delete);
+                    }
                     ctx.e(Event::Insert(c));
+                }
+                Key::Delete => ctx.e(Event::Delete),
+                Key::Enter => ctx.e(Event::NewLine),
+                Key::Escape => {
+                    ViCmd::default().motion(Motion::Left, ctx);
+                    ctx.finish_change();
+                    self.reset();
                 }
                 _ => {
                     //TODO: more keys

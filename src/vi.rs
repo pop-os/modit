@@ -657,6 +657,14 @@ impl Parser for ViParser {
                                 Some(line) => cmd.motion(Motion::GotoLine(line), ctx),
                                 None => cmd.motion(Motion::GotoLine(1), ctx),
                             },
+                            'n' => {
+                                cmd.motion(Motion::Inside, ctx);
+                                cmd.text_object(TextObject::Search { forwards: true }, ctx);
+                            }
+                            'N' => {
+                                cmd.motion(Motion::Inside, ctx);
+                                cmd.text_object(TextObject::Search { forwards: false }, ctx);
+                            }
                             //TODO: more g commands
                             _ => {}
                         },

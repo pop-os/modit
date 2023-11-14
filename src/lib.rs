@@ -321,6 +321,7 @@ pub enum TextObject {
     DoubleQuotes,
     Paragraph,
     Parentheses,
+    Search { forwards: bool },
     Sentence,
     SingleQuotes,
     SquareBrackets,

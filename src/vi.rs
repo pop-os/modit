@@ -19,10 +19,12 @@ impl<F: FnMut(Event)> ViContext<F> {
             log::warn!("pending change already started");
         }
         self.pending_change = Some(Vec::new());
+        (self.callback)(Event::ChangeStart);
     }
 
     fn finish_change(&mut self) {
         self.change = self.pending_change.take();
+        (self.callback)(Event::ChangeFinish);
     }
 
     fn e(&mut self, event: Event) {

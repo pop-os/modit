@@ -49,6 +49,10 @@ pub enum Event {
     AutoIndent,
     /// Delete text behind cursor
     Backspace,
+    /// Finish grouping changes together
+    ChangeFinish,
+    /// Start grouping changes together
+    ChangeStart,
     /// Copy to clipboard (TODO: multiple clipboards?)
     Copy,
     /// Delete text in front of cursor

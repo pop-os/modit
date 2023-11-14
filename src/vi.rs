@@ -14,11 +14,9 @@ pub struct ViContext<F: FnMut(Event)> {
 
 impl<F: FnMut(Event)> ViContext<F> {
     fn start_change(&mut self) {
-        if self.pending_change.is_some() {
-            //TODO: what to do in this case?
-            log::warn!("pending change already started");
+        if self.pending_change.is_none() {
+            self.pending_change = Some(Vec::new());
         }
-        self.pending_change = Some(Vec::new());
         (self.callback)(Event::ChangeStart);
     }
 
@@ -598,9 +596,11 @@ impl Parser for ViParser {
                     // Repeat change
                     '.' => {
                         if let Some(change) = &self.last_change {
+                            ctx.start_change();
                             for event in change.iter() {
                                 ctx.e(event.clone());
                             }
+                            ctx.finish_change();
                         }
                     }
                     // Indent (if not text object)

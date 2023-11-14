@@ -670,23 +670,31 @@ impl Parser for ViParser {
                 }
             },
             ViMode::Insert | ViMode::Replace => match key {
+                //TODO: FINISH CHANGE ON MOTION?
                 Key::Backspace => ctx.e(Event::Backspace),
+                Key::Backtab => ctx.e(Event::ShiftLeft),
                 Key::Char(c) => {
                     if self.mode == ViMode::Replace {
                         ctx.e(Event::Delete);
                     }
                     ctx.e(Event::Insert(c));
                 }
+                Key::Down => ViCmd::default().motion(Motion::Down, ctx),
                 Key::Delete => ctx.e(Event::Delete),
+                Key::End => ViCmd::default().motion(Motion::End, ctx),
                 Key::Enter => ctx.e(Event::NewLine),
                 Key::Escape => {
                     ViCmd::default().motion(Motion::LeftInLine, ctx);
                     ctx.finish_change();
                     self.reset();
                 }
-                _ => {
-                    //TODO: more keys
-                }
+                Key::Home => ViCmd::default().motion(Motion::Home, ctx),
+                Key::Left => ViCmd::default().motion(Motion::LeftInLine, ctx),
+                Key::PageDown => ViCmd::default().motion(Motion::PageDown, ctx),
+                Key::PageUp => ViCmd::default().motion(Motion::PageUp, ctx),
+                Key::Right => ViCmd::default().motion(Motion::RightInLine, ctx),
+                Key::Tab => ctx.e(Event::ShiftRight),
+                Key::Up => ViCmd::default().motion(Motion::Up, ctx),
             },
             ViMode::Command { ref mut value } => match key {
                 Key::Escape => {

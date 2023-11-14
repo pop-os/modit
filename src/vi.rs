@@ -673,6 +673,20 @@ impl Parser for ViParser {
                     }
                     self.reset();
                 }
+                'r' => {
+                    match key {
+                        Key::Char(c) => {
+                            //TODO: a visual selection allows replacing all characters
+                            ctx.start_change();
+                            ctx.e(Event::Delete);
+                            ctx.e(Event::Insert(c));
+                            ViCmd::default().motion(Motion::LeftInLine, ctx);
+                            ctx.finish_change();
+                        }
+                        _ => {}
+                    }
+                    self.reset();
+                }
                 _ => {
                     //TODO
                     log::info!("TODO: extra command {:?}{:?}", extra, key);

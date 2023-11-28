@@ -475,8 +475,7 @@ impl Parser for ViParser {
                             ctx.e(Event::SelectClear);
                             self.mode = ViMode::Normal;
                         } else {
-                            //TODO: select by line
-                            ctx.e(Event::SelectStart);
+                            ctx.e(Event::SelectLineStart);
                             self.mode = ViMode::VisualLine;
                         }
                     }

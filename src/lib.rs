@@ -73,6 +73,8 @@ pub enum Event {
     SelectClear,
     /// Start selection
     SelectStart,
+    /// Start selection by line
+    SelectLineStart,
     /// Select text object
     SelectTextObject(TextObject, bool),
     /// Set search

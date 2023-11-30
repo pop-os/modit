@@ -53,8 +53,6 @@ pub enum Event {
     ChangeFinish,
     /// Start grouping changes together
     ChangeStart,
-    /// Copy to clipboard (TODO: multiple clipboards?)
-    Copy,
     /// Delete text in front of cursor
     Delete,
     /// Escape key
@@ -65,8 +63,8 @@ pub enum Event {
     Motion(Motion),
     /// Create new line
     NewLine,
-    /// Paste from clipboard (TODO: multiple clipboards?)
-    Paste,
+    /// Put from register
+    Put { register: char, after: bool },
     /// Notify of a mode change requiring redraw
     Redraw,
     /// Clear selection
@@ -87,6 +85,8 @@ pub enum Event {
     SwapCase,
     /// Undo last action
     Undo,
+    /// Yank to register
+    Yank { register: char },
 }
 
 #[derive(Clone, Copy, Debug)]

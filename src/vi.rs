@@ -3,13 +3,15 @@ use core::{fmt, mem};
 
 use crate::{Event, Key, Motion, Operator, Parser, TextObject, Word};
 
+pub const VI_DEFAULT_REGISTER: char = '"';
+
 #[derive(Debug)]
 pub struct ViContext<F: FnMut(Event)> {
     callback: F,
     selection: bool,
     pending_change: Option<Vec<Event>>,
     change: Option<Vec<Event>>,
-    enter_insert_mode: bool,
+    set_mode: Option<ViMode>,
 }
 
 impl<F: FnMut(Event)> ViContext<F> {
@@ -36,6 +38,7 @@ impl<F: FnMut(Event)> ViContext<F> {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ViCmd {
+    register: Option<char>,
     count: Option<usize>,
     operator: Option<Operator>,
     motion: Option<Motion>,
@@ -44,6 +47,9 @@ pub struct ViCmd {
 
 impl fmt::Display for ViCmd {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(register) = self.register {
+            write!(f, "\"{register}")?;
+        }
         if let Some(count) = self.count {
             write!(f, "{count}")?;
         }
@@ -118,6 +124,7 @@ impl ViCmd {
             }
         }
 
+        let register = self.register.take().unwrap_or(VI_DEFAULT_REGISTER);
         let count = self.count.take().unwrap_or(1);
         let motion = self.motion.take().unwrap_or(Motion::Selection);
         let text_object = self.text_object.take();
@@ -138,9 +145,7 @@ impl ViCmd {
                         false,
                     )),
                     Motion::Line => {
-                        ctx.e(Event::Motion(Motion::SoftHome));
-                        ctx.e(Event::SelectStart);
-                        ctx.e(Event::Motion(Motion::End));
+                        ctx.e(Event::SelectLineStart);
                     }
                     Motion::Selection => {}
                     _ => {
@@ -151,15 +156,18 @@ impl ViCmd {
                     }
                 }
 
+                let mut enter_insert_mode = false;
                 match operator {
                     Operator::AutoIndent => {
                         ctx.e(Event::AutoIndent);
                     }
                     Operator::Change => {
+                        ctx.e(Event::Yank { register });
                         ctx.e(Event::Delete);
-                        ctx.enter_insert_mode = true;
+                        enter_insert_mode = true;
                     }
                     Operator::Delete => {
+                        ctx.e(Event::Yank { register });
                         ctx.e(Event::Delete);
                     }
                     Operator::ShiftLeft => {
@@ -172,12 +180,16 @@ impl ViCmd {
                         ctx.e(Event::SwapCase);
                     }
                     Operator::Yank => {
-                        ctx.e(Event::Copy);
+                        ctx.e(Event::Yank { register });
                     }
                 }
 
-                if !ctx.enter_insert_mode {
+                ctx.e(Event::SelectClear);
+                if enter_insert_mode {
+                    ctx.set_mode = Some(ViMode::Insert);
+                } else {
                     ctx.finish_change();
+                    ctx.set_mode = Some(ViMode::Normal);
                 }
             }
             None => match motion {
@@ -225,6 +237,7 @@ pub enum ViMode {
 pub struct ViParser {
     pub mode: ViMode,
     pub cmd: ViCmd,
+    pub register_mode: ViMode,
     pub semicolon_motion: Option<Motion>,
     pub pending_change: Option<Vec<Event>>,
     pub last_change: Option<Vec<Event>>,
@@ -235,6 +248,7 @@ impl ViParser {
         Self {
             mode: ViMode::Normal,
             cmd: ViCmd::default(),
+            register_mode: ViMode::Normal,
             semicolon_motion: None,
             pending_change: None,
             last_change: None,
@@ -259,7 +273,7 @@ impl Parser for ViParser {
             callback,
             pending_change: self.pending_change.take(),
             change: None,
-            enter_insert_mode: false,
+            set_mode: None,
         };
         let ctx = &mut ctx;
         match self.mode {
@@ -331,7 +345,7 @@ impl Parser for ViParser {
                     }
                     // Delete to end of line
                     'D' => {
-                        cmd.operator(Operator::Change, ctx);
+                        cmd.operator(Operator::Delete, ctx);
                         cmd.motion(Motion::End, ctx);
                     }
                     // End of word
@@ -412,13 +426,20 @@ impl Parser for ViParser {
                     // Paste after (if not text object)
                     'p' => {
                         if !cmd.text_object(TextObject::Paragraph, ctx) {
-                            ViCmd::default().motion(Motion::Right, ctx);
-                            ctx.e(Event::Paste);
+                            let register = cmd.register.unwrap_or(VI_DEFAULT_REGISTER);
+                            ctx.e(Event::Put {
+                                register,
+                                after: true,
+                            });
                         }
                     }
                     // Paste before
                     'P' => {
-                        ctx.e(Event::Paste);
+                        let register = cmd.register.unwrap_or(VI_DEFAULT_REGISTER);
+                        ctx.e(Event::Put {
+                            register,
+                            after: false,
+                        });
                     }
                     //TODO: q, Q
                     // Replace char
@@ -576,8 +597,13 @@ impl Parser for ViParser {
                     }
                     //TODO (if not text object)
                     '\'' => if !cmd.text_object(TextObject::SingleQuotes, ctx) {},
-                    //TODO (if not text object)
-                    '"' => if !cmd.text_object(TextObject::DoubleQuotes, ctx) {},
+                    // Select register (if not text object)
+                    '"' => {
+                        if !cmd.text_object(TextObject::DoubleQuotes, ctx) {
+                            self.register_mode = self.mode.clone();
+                            self.mode = ViMode::Extra(c);
+                        }
+                    }
                     // Reverse f/F/t/T
                     ',' => {
                         if let Some(motion) = self.semicolon_motion {
@@ -628,6 +654,7 @@ impl Parser for ViParser {
                 },
             },
             ViMode::Extra(extra) => match extra {
+                // Find/till character
                 'f' | 'F' | 't' | 'T' => {
                     match key {
                         Key::Char(c) => {
@@ -645,6 +672,7 @@ impl Parser for ViParser {
                     }
                     self.reset();
                 }
+                // Extra commands
                 'g' => {
                     match key {
                         Key::Char(c) => match c {
@@ -672,6 +700,7 @@ impl Parser for ViParser {
                     }
                     self.reset();
                 }
+                // Replace character
                 'r' => {
                     match key {
                         Key::Char(c) => {
@@ -685,6 +714,17 @@ impl Parser for ViParser {
                         _ => {}
                     }
                     self.reset();
+                }
+                // Select register
+                '"' => {
+                    match key {
+                        Key::Char(c) => {
+                            cmd.register = Some(c);
+                        }
+                        _ => {}
+                    }
+                    self.mode = self.register_mode.clone();
+                    self.register_mode = ViMode::Normal;
                 }
                 _ => {
                     //TODO
@@ -768,9 +808,9 @@ impl Parser for ViParser {
             },
         }
 
-        // Enter insert mode, for example, after Change operator
-        if ctx.enter_insert_mode {
-            self.mode = ViMode::Insert;
+        // Reset mode after operators
+        if let Some(mode) = ctx.set_mode.take() {
+            self.mode = mode;
         }
 
         // Save change state

@@ -281,7 +281,7 @@ impl Parser for ViParser {
                 Key::Backspace => cmd.motion(Motion::Left, ctx),
                 //TODO: what should backtab do?
                 Key::Backtab => (),
-                Key::Delete => cmd.repeat(|_| ctx.e(Event::Delete)),
+                Key::Delete => cmd.repeat(|_| ctx.e(Event::DeleteInLine)),
                 Key::Down => cmd.motion(Motion::Down, ctx),
                 Key::End => cmd.motion(Motion::End, ctx),
                 Key::Enter => {
@@ -455,7 +455,7 @@ impl Parser for ViParser {
                     's' => {
                         if !cmd.text_object(TextObject::Sentence, ctx) {
                             ctx.start_change();
-                            cmd.repeat(|_| ctx.e(Event::Delete));
+                            cmd.repeat(|_| ctx.e(Event::DeleteInLine));
                             self.mode = ViMode::Insert;
                         }
                     }
@@ -513,9 +513,9 @@ impl Parser for ViParser {
                         }
                     }
                     // Remove character at cursor
-                    'x' => cmd.repeat(|_| ctx.e(Event::Delete)),
+                    'x' => cmd.repeat(|_| ctx.e(Event::DeleteInLine)),
                     // Remove character before cursor
-                    'X' => cmd.repeat(|_| ctx.e(Event::Backspace)),
+                    'X' => cmd.repeat(|_| ctx.e(Event::BackspaceInLine)),
                     // Yank
                     'y' => cmd.operator(Operator::Yank, ctx),
                     // Yank line
@@ -652,6 +652,9 @@ impl Parser for ViParser {
                     ' ' => cmd.motion(Motion::Right, ctx),
                     _ => {}
                 },
+                Key::Ctrl(c) => {
+                    //TODO: Ctrl characters
+                }
             },
             ViMode::Extra(extra) => match extra {
                 // Find/till character
@@ -741,6 +744,9 @@ impl Parser for ViParser {
                         ctx.e(Event::Delete);
                     }
                     ctx.e(Event::Insert(c));
+                }
+                Key::Ctrl(c) => {
+                    //TODO: control characters
                 }
                 Key::Down => ViCmd::default().motion(Motion::Down, ctx),
                 Key::Delete => ctx.e(Event::Delete),

@@ -47,14 +47,18 @@ mod vi;
 pub enum Event {
     /// Automatically indent
     AutoIndent,
-    /// Delete text behind cursor
+    /// Delete character before cursor
     Backspace,
+    /// Delete character before cursor without going beyond line boundaries
+    BackspaceInLine,
     /// Finish grouping changes together
     ChangeFinish,
     /// Start grouping changes together
     ChangeStart,
-    /// Delete text in front of cursor
+    /// Delete character at cursor
     Delete,
+    /// Delete character at cursor without going beyond line boundaries
+    DeleteInLine,
     /// Escape key
     Escape,
     /// Insert character at cursor
@@ -95,6 +99,7 @@ pub enum Key {
     Backspace,
     Backtab,
     Char(char),
+    Ctrl(char),
     Delete,
     Down,
     End,

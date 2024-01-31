@@ -281,7 +281,11 @@ impl Parser for ViParser {
                 Key::Backspace => cmd.motion(Motion::Left, ctx),
                 //TODO: what should backtab do?
                 Key::Backtab => (),
-                Key::Delete => cmd.repeat(|_| ctx.e(Event::DeleteInLine)),
+                Key::Delete => {
+                    ctx.start_change();
+                    cmd.repeat(|_| ctx.e(Event::DeleteInLine));
+                    ctx.finish_change();
+                }
                 Key::Down => cmd.motion(Motion::Down, ctx),
                 Key::End => cmd.motion(Motion::End, ctx),
                 Key::Enter => {
@@ -513,9 +517,17 @@ impl Parser for ViParser {
                         }
                     }
                     // Remove character at cursor
-                    'x' => cmd.repeat(|_| ctx.e(Event::DeleteInLine)),
+                    'x' => {
+                        ctx.start_change();
+                        cmd.repeat(|_| ctx.e(Event::DeleteInLine));
+                        ctx.finish_change();
+                    },
                     // Remove character before cursor
-                    'X' => cmd.repeat(|_| ctx.e(Event::BackspaceInLine)),
+                    'X' => {
+                        ctx.start_change();
+                        cmd.repeat(|_| ctx.e(Event::BackspaceInLine));
+                        ctx.finish_change();
+                    },
                     // Yank
                     'y' => cmd.operator(Operator::Yank, ctx),
                     // Yank line

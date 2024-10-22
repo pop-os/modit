@@ -36,7 +36,7 @@ impl<F: FnMut(Event)> ViContext<F> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ViCmd {
     register: Option<char>,
     count: Option<usize>,
@@ -521,13 +521,13 @@ impl Parser for ViParser {
                         ctx.start_change();
                         cmd.repeat(|_| ctx.e(Event::DeleteInLine));
                         ctx.finish_change();
-                    },
+                    }
                     // Remove character before cursor
                     'X' => {
                         ctx.start_change();
                         cmd.repeat(|_| ctx.e(Event::BackspaceInLine));
                         ctx.finish_change();
-                    },
+                    }
                     // Yank
                     'y' => cmd.operator(Operator::Yank, ctx),
                     // Yank line
